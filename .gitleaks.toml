@@ -1,0 +1,15 @@
+# Kubby gitleaks configuration
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documentation placeholders — never real secrets"
+paths = [
+  '''\.env\.example$''',
+  '''docs/ARCHITECTURE\.md$''',
+]
+regexes = [
+  '''CHANGE_ME[A-Z_0-9]*''',
+  '''<from-secret>''',
+  '''<base64-32-bytes>''',
+]

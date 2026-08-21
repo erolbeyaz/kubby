@@ -1,0 +1,65 @@
+# --- Secrets: asla commit edilmez ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+kubeconfig
+kubeconfig-*
+*.kubeconfig
+secrets/
+.secrets/
+
+# --- Go ---
+/server/bin/
+/server/tmp/
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+__debug_bin*
+vendor/
+
+# --- Node / frontend ---
+node_modules/
+/web/dist/
+dist/
+/web/.vite/
+/web/coverage/
+/server/internal/httpapi/webdist/
+*.tsbuildinfo
+.eslintcache
+npm-debug.log*
+yarn-error.log*
+
+# --- Test / araçlar ---
+/test-results/
+/playwright-report/
+/blob-report/
+.playwright/
+*.trivy.json
+gitleaks-report.json
+
+# --- Loglar ---
+*.log
+logs/
+
+# --- Yerel geliştirme ---
+/data/
+/tmp/
+docker-compose.override.yml
+
+# --- Claude Code ---
+.claude/settings.local.json
+
+# --- Editör / işletim sistemi ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

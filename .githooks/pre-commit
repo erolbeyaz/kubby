@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Blocks commits containing secrets. Runs gitleaks natively or via Docker.
+set -euo pipefail
+
+RED=$'\033[0;31m'; YELLOW=$'\033[0;33m'; GREEN=$'\033[0;32m'; NC=$'\033[0m'
+
+run_gitleaks() {
+  if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks protect --staged --redact --verbose
+  elif command -v docker >/dev/null 2>&1; then
+    docker run --rm -v "$(git rev-parse --show-toplevel):/repo" -w /repo \
+      zricethezav/gitleaks:latest protect --staged --redact --verbose
+  else
+    printf '%s\n' "${YELLOW}WARNING: gitleaks not found (neither binary nor Docker).${NC}"
+    printf '%s\n' "${YELLOW}Secret scanning SKIPPED. Install: https://github.com/gitleaks/gitleaks${NC}"
+    return 0
+  fi
+}
+
+printf '%s\n' "Scanning staged changes for secrets..."
+if run_gitleaks; then
+  printf '%s\n' "${GREEN}No secrets detected.${NC}"
+else
+  printf '\n%s\n' "${RED}COMMIT BLOCKED: potential secret detected in staged changes.${NC}"
+  printf '%s\n' "Remove the secret, or if it is a false positive add a rule to .gitleaks.toml."
+  printf '%s\n' "Never use --no-verify to bypass this check."
+  exit 1
+fi
