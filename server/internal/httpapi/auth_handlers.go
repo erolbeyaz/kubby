@@ -498,7 +498,13 @@ func userResponseFrom(u *store.User) *userResponse {
 // decodeJSON reads a bounded, strict JSON body. Unknown fields are rejected so a typo
 // in a client payload fails loudly instead of being silently ignored.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return decodeJSONLimit(w, r, dst, maxBodyBytes)
+}
+
+// decodeJSONLimit is decodeJSON with an explicit size cap, for the few endpoints that
+// legitimately carry more than a small payload.
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()

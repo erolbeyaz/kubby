@@ -33,8 +33,18 @@ GOBIN := $(shell go env GOPATH)/bin
 
 # Local development loads .env into the environment. In production these values come
 # from a Kubernetes Secret, so the application itself never reads a dotenv file.
+#
+# A variable already present in the environment WINS: .env supplies defaults, it does
+# not override what the caller asked for. Sourcing it the other way round silently
+# undid explicit overrides — `make rotate-key` with a new key in the environment
+# rotated to the old one and reported nothing to do.
 define with_env
-set -a; [ -f .env ] && . ./.env; set +a;
+while IFS= read -r line || [ -n "$$line" ]; do \
+  case "$$line" in ''|\#*) continue ;; *=*) ;; *) continue ;; esac; \
+  key=$${line%%=*}; \
+  eval "existing=\$${$$key+set}"; \
+  [ -n "$$existing" ] || export "$$line"; \
+done < .env 2>/dev/null || true;
 endef
 
 .PHONY: help
@@ -57,13 +67,19 @@ setup: ## Install dependencies and pinned tools
 gen-key: ## Generate a KUBBY_ENCRYPTION_KEY (copy the output into .env)
 	@echo "KUBBY_ENCRYPTION_KEY=$$(openssl rand -base64 32)"
 
+.PHONY: rotate-key
+rotate-key: ## Rewrap stored secrets under a new key (see docs/ARCHITECTURE.md)
+	@# Set KUBBY_ENCRYPTION_KEY to the new key, KUBBY_ENCRYPTION_KEY_PREVIOUS to the
+	@# current one, and raise KUBBY_ENCRYPTION_KEY_VERSION. Add -dry-run to rehearse.
+	@$(with_env) cd $(SERVER_DIR) && go run ./cmd/kubby-rotate-key $(ARGS)
+
 ## ---------------------------------------------------------------- develop
 
 .PHONY: dev
-dev: check-tools db-up ## Run Postgres, the API (hot reload) and the Vite dev server
+dev: check-tools db-up reset-embedded ## Run Postgres, the API (hot reload) and the Vite dev server
 	@echo ""
-	@echo "  Kubby UI   http://localhost:5173"
-	@echo "  Kubby API  http://localhost:8080"
+	@echo "  Kubby UI   http://localhost:5173   <- open this one"
+	@echo "  Kubby API  http://localhost:8080   (API only in dev; it serves no UI)"
 	@echo "  From Windows, if localhost fails: http://$$(hostname -I | awk '{print $$1}'):5173"
 	@echo ""
 	@$(with_env) \
@@ -71,6 +87,23 @@ dev: check-tools db-up ## Run Postgres, the API (hot reload) and the Vite dev se
 	( cd $(SERVER_DIR) && $(GOBIN)/air ) & \
 	( cd $(WEB_DIR) && npm run dev ) & \
 	wait
+
+.PHONY: reset-embedded
+reset-embedded: ## Drop the embedded frontend so :8080 cannot serve a stale build
+	@# A previous `make build` leaves a working but outdated UI embedded in the binary.
+	@# In dev that is worse than no UI at all: :8080 would silently serve an older
+	@# version than :5173, and the difference is invisible until something is missing.
+	@rm -rf $(DIST_DIR)
+	@mkdir -p $(DIST_DIR)
+	@touch $(DIST_DIR)/.gitkeep
+	@printf '%s\n' \
+		'<!doctype html><meta charset="utf-8"><title>Kubby — development</title>' \
+		'<body style="font-family:system-ui;background:#131313;color:#e8e8e8;padding:3rem">' \
+		'<h1 style="color:#10b981">Kubby is running in development mode</h1>' \
+		'<p>This port serves the API only. The user interface is on ' \
+		'<a style="color:#10b981" href="http://localhost:5173">http://localhost:5173</a>.</p>' \
+		'<p style="color:#9a9a9a">Run <code>make build</code> to embed the interface into the binary.</p>' \
+		> $(DIST_DIR)/index.html
 
 .PHONY: check-tools
 check-tools: ## Verify the tools `make dev` needs are installed

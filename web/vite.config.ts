@@ -17,6 +17,13 @@ export default defineConfig({
     // Bind to all interfaces: under WSL2 a 127.0.0.1-only listener is not reliably
     // reachable from the Windows browser.
     host: true,
+
+    // WSL2 delivers no inotify events for files on /mnt/c, so the watcher has to poll.
+    // Without this the dev server silently serves whatever it loaded at startup.
+    watch: {
+      usePolling: true,
+      interval: 400,
+    },
     port: 5173,
     strictPort: true,
     // The dev server runs on its own port, so the browser's Origin header would never

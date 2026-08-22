@@ -12,6 +12,7 @@ import (
 
 	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/auth"
+	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/config"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
@@ -19,13 +20,14 @@ import (
 
 // Deps are the collaborators the HTTP layer needs.
 type Deps struct {
-	Config *config.Config
-	Logger *slog.Logger
-	DB     Pinger
-	Store  *store.DB
-	Auth   *auth.Service
-	Audit  *audit.Emitter
-	WebFS  fs.FS
+	Config  *config.Config
+	Logger  *slog.Logger
+	DB      Pinger
+	Store   *store.DB
+	Auth    *auth.Service
+	Cluster *cluster.Service
+	Audit   *audit.Emitter
+	WebFS   fs.FS
 }
 
 // Server owns the handler and any background resources it needs to release.
@@ -57,6 +59,12 @@ func New(d Deps) *Server {
 		secure:     secure,
 		refreshTTL: d.Config.Auth.RefreshTTL,
 		loginLimit: loginLimit,
+	}
+	clusterAPI := &clusterHandlers{
+		svc:      d.Cluster,
+		clusters: d.Store.Clusters(),
+		users:    d.Store.Users(),
+		audit:    d.Audit,
 	}
 	userAPI := &userHandlers{
 		users:     d.Store.Users(),
@@ -119,6 +127,24 @@ func New(d Deps) *Server {
 			authed.Post("/me/password", authAPI.changePassword)
 			authed.Get("/me/sessions", authAPI.listSessions)
 			authed.Delete("/me/sessions", authAPI.revokeOtherSessions)
+
+			// Cluster reads are open to any authenticated user; the handler narrows the
+			// result to what they were granted.
+			authed.With(requirePermission(rbac.PermClusterRead)).Group(func(cl chi.Router) {
+				cl.Get("/clusters", clusterAPI.list)
+				cl.Get("/clusters/{id}", clusterAPI.get)
+				cl.Post("/clusters/{id}/test", clusterAPI.test)
+			})
+
+			authed.With(requirePermission(rbac.PermClusterManage)).Group(func(cl chi.Router) {
+				cl.Post("/clusters/validate", clusterAPI.validate)
+				cl.Post("/clusters", clusterAPI.create)
+				cl.Patch("/clusters/{id}", clusterAPI.update)
+				cl.Delete("/clusters/{id}", clusterAPI.remove)
+				cl.Put("/clusters/{id}/credentials", clusterAPI.replaceCredential)
+				cl.Get("/clusters/{id}/grants", clusterAPI.listGrants)
+				cl.Put("/clusters/{id}/grants", clusterAPI.setGrant)
+			})
 
 			authed.With(requirePermission(rbac.PermUserManage)).Group(func(admin chi.Router) {
 				admin.Get("/users", userAPI.list)

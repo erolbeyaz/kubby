@@ -1,3 +1,4 @@
+
 import { useState } from 'react'
 
 import { AccountMenu, type AccountAction } from '@/components/AccountMenu'
@@ -8,9 +9,11 @@ import { SecondaryPanel } from '@/components/SecondaryPanel'
 import { StatusBar } from '@/components/StatusBar'
 import { TabBar, type WorkspaceTab } from '@/components/TabBar'
 import { AccountScreen } from '@/features/account/AccountScreen'
+import { ClustersScreen } from '@/features/clusters/ClustersScreen'
 import { UsersScreen } from '@/features/users/UsersScreen'
 import type { Me } from '@/lib/api'
 
+import { useNavigation } from './navigation'
 import { useServerStatus } from './use-server-status'
 
 const RAIL_ITEMS: readonly RailItem[] = [
@@ -43,43 +46,53 @@ interface ShellProps {
 }
 
 export function Shell({ me, onSignOut }: ShellProps) {
-  const [activeSection, setActiveSection] = useState('health')
-  const [settingsView, setSettingsView] = useState<SettingsView>('account')
+  const { location, navigate } = useNavigation()
   const [accountFocus, setAccountFocus] = useState<AccountAction | null>(null)
   const { connection, detail, version } = useServerStatus()
 
+  const activeSection = location.section
+  const settingsView: SettingsView = location.settingsView
   const canManageUsers = me.permissions.includes('user.manage')
 
   // The account menu jumps straight to the relevant section rather than dropping the
   // user on a settings page they then have to navigate.
   const openAccount = (action: AccountAction) => {
-    setActiveSection('settings')
-    setSettingsView('account')
+    navigate({ section: 'settings', settingsView: 'account' })
     setAccountFocus(action)
   }
   const tabs: readonly WorkspaceTab[] =
     activeSection === 'settings'
       ? [{ id: settingsView, label: settingsView === 'account' ? 'Account' : 'Users' }]
-      : [{ id: 'welcome', label: 'Welcome' }]
+      : activeSection === 'clusters'
+        ? [{ id: 'clusters', label: 'Clusters' }]
+        : [{ id: 'welcome', label: 'Welcome' }]
 
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: 'var(--bg-base)' }}>
       <div className="flex min-h-0 flex-1">
-        <IconRail items={RAIL_ITEMS} activeId={activeSection} onSelect={setActiveSection} />
+        <IconRail
+          items={RAIL_ITEMS}
+          activeId={activeSection}
+          onSelect={(section) => navigate({ section, clusterId: null })}
+        />
 
         <SecondaryPanel title={PANEL_TITLE[activeSection] ?? 'Kubby'}>
-          {activeSection === 'settings' ? (
+          {activeSection === 'clusters' ? (
+            <p className="px-3 py-2" style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-muted)' }}>
+              Select a cluster to see its details.
+            </p>
+          ) : activeSection === 'settings' ? (
             <nav className="flex flex-col p-1">
               <PanelLink
                 label="Account"
                 active={settingsView === 'account'}
-                onClick={() => setSettingsView('account')}
+                onClick={() => navigate({ section: 'settings', settingsView: 'account' })}
               />
               {canManageUsers && (
                 <PanelLink
                   label="Users"
                   active={settingsView === 'users'}
-                  onClick={() => setSettingsView('users')}
+                  onClick={() => navigate({ section: 'settings', settingsView: 'users' })}
                 />
               )}
             </nav>
@@ -114,11 +127,18 @@ export function Shell({ me, onSignOut }: ShellProps) {
               <AccountScreen me={me} focus={accountFocus} />
             )}
             {activeSection === 'settings' && settingsView === 'users' && canManageUsers && <UsersScreen me={me} />}
-            {activeSection !== 'settings' && (
+            {activeSection === 'clusters' && (
+              <ClustersScreen
+                me={me}
+                selectedId={location.clusterId}
+                onSelect={(clusterId) => navigate({ section: 'clusters', clusterId })}
+              />
+            )}
+            {activeSection !== 'settings' && activeSection !== 'clusters' && (
               <EmptyState
-                title="No clusters yet"
-                description="Cluster management arrives in the next phase. Authentication, roles and the audit trail are in place."
-                hint="Phase 2 — identity and access"
+                title="Not built yet"
+                description="Cluster connections are in place. Resource browsing, logs and the health panel arrive in the next phases."
+                hint="Phase 3 — cluster connections"
               />
             )}
           </div>

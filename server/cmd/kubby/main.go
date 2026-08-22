@@ -18,6 +18,7 @@ import (
 
 	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/auth"
+	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/config"
 	"github.com/erolbeyaz/kubby/internal/crypto"
 	"github.com/erolbeyaz/kubby/internal/httpapi"
@@ -97,14 +98,32 @@ func run() error {
 		Issuer:             cfg.HTTP.PublicURL.Hostname(),
 	})
 
+	clusterService := cluster.NewService(db, keyring, cluster.Settings{
+		DefaultQPS:     cfg.K8s.QPS,
+		DefaultBurst:   cfg.K8s.Burst,
+		Timeout:        cfg.K8s.Timeout,
+		AllowLoopback:  cfg.K8s.AllowLoopbackClusters,
+		AllowInCluster: cfg.K8s.AllowInCluster,
+	})
+
+	auditLog := audit.New(db.Audit(), logger)
+
+	monitor := cluster.NewMonitor(clusterService, db, auditLog, logger, cfg.K8s.HealthCheckInterval)
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		monitor.Run(ctx)
+	}()
+
 	server := httpapi.New(httpapi.Deps{
-		Config: cfg,
-		Logger: logger,
-		DB:     db,
-		Store:  db,
-		Auth:   authService,
-		Audit:  audit.New(db.Audit(), logger),
-		WebFS:  webFS,
+		Config:  cfg,
+		Logger:  logger,
+		DB:      db,
+		Store:   db,
+		Auth:    authService,
+		Cluster: clusterService,
+		Audit:   audit.New(db.Audit(), logger),
+		WebFS:   webFS,
 	})
 	defer server.Close()
 
@@ -157,6 +176,15 @@ func run() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
+
+	// The monitor watches the same context, so it is already unwinding; waiting keeps
+	// an in-flight probe from being cut off mid-write.
+	select {
+	case <-monitorDone:
+	case <-shutdownCtx.Done():
+		logger.Warn("cluster monitor did not stop in time")
+	}
+
 	logger.Info("shutdown complete")
 	return nil
 }

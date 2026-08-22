@@ -83,12 +83,35 @@ function UserTable({ users, currentUserId }: { users: User[]; currentUserId: str
   const update = useMutation({
     mutationFn: ({ id, body }: { id: string; body: { role?: Role; isActive?: boolean } }) =>
       api.updateUser(id, body),
-    onSuccess: () => {
-      setFailure(null)
-      void queryClient.invalidateQueries({ queryKey: ['users'] })
+
+    // Apply the change locally straight away. Waiting for the round trip made the
+    // control snap back to its old value and disabled every other row meanwhile, which
+    // read as the page freezing.
+    onMutate: async ({ id, body }) => {
+      await queryClient.cancelQueries({ queryKey: ['users'] })
+      const previous = queryClient.getQueryData<{ users: User[] }>(['users'])
+
+      queryClient.setQueryData<{ users: User[] }>(['users'], (current) =>
+        current
+          ? { users: current.users.map((u) => (u.id === id ? { ...u, ...body } : u)) }
+          : current,
+      )
+      return { previous }
     },
-    onError: (error) => setFailure(error instanceof ApiError ? error : null),
+
+    onError: (error, _variables, context) => {
+      // The server refused, so put the old value back rather than leaving the table
+      // showing a change that did not happen.
+      if (context?.previous) queryClient.setQueryData(['users'], context.previous)
+      setFailure(error instanceof ApiError ? error : null)
+    },
+
+    onSuccess: () => setFailure(null),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['users'] }),
   })
+
+  // Only the row being changed is locked; the rest of the table stays usable.
+  const pendingId = update.isPending ? update.variables?.id : undefined
 
   return (
     <>
@@ -132,7 +155,7 @@ function UserTable({ users, currentUserId }: { users: User[]; currentUserId: str
                   <Select
                     aria-label={`Role for ${user.email}`}
                     value={user.role}
-                    disabled={isSelf || update.isPending}
+                    disabled={isSelf || pendingId === user.id}
                     title={isSelf ? 'You cannot change your own role' : ROLE_DESCRIPTION[user.role]}
                     onChange={(e) =>
                       update.mutate({ id: user.id, body: { role: e.target.value as Role } })
@@ -163,7 +186,7 @@ function UserTable({ users, currentUserId }: { users: User[]; currentUserId: str
                 <td className="px-4 py-2">
                   <Button
                     variant={user.isActive ? 'danger' : 'secondary'}
-                    disabled={isSelf || update.isPending}
+                    disabled={isSelf || pendingId === user.id}
                     title={isSelf ? 'You cannot deactivate yourself' : undefined}
                     onClick={() =>
                       update.mutate({ id: user.id, body: { isActive: !user.isActive } })

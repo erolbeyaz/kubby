@@ -21,6 +21,7 @@ import (
 
 	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/auth"
+	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/config"
 	"github.com/erolbeyaz/kubby/internal/crypto"
 	"github.com/erolbeyaz/kubby/internal/httpapi"
@@ -103,6 +104,9 @@ func newHarnessWithMFA(t *testing.T, requireMFAForAdmin bool) *harness {
 			LockoutDurations: cfg.Auth.LockoutDurations, MaxLockouts: cfg.Auth.MaxLockouts,
 			RequireMFAForAdmin: requireMFAForAdmin,
 			Argon2:             auth.DefaultArgon2Params(16), Issuer: "kubby-test",
+		}),
+		Cluster: cluster.NewService(db, keyring, cluster.Settings{
+			DefaultQPS: 20, DefaultBurst: 40, Timeout: 10 * time.Second, AllowLoopback: true,
 		}),
 		Audit: audit.New(db.Audit(), logger),
 		WebFS: fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<!doctype html>")}},

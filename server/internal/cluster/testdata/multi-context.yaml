@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Config
+clusters:
+- name: kubby-test
+  cluster: {server: https://127.0.0.1:6550, certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tClRFU1QtRklYVFVSRS1OT1QtQS1SRUFMLUNBCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K}
+- name: other
+  cluster: {server: https://other.example.local:6443, insecure-skip-tls-verify: true}
+users:
+- name: kubby-test-user
+  user: {token: REDACTED-TEST-TOKEN-not-a-real-credential}
+contexts:
+- name: production
+  context: {cluster: kubby-test, user: kubby-test-user}
+- name: staging
+  context: {cluster: other, user: kubby-test-user}
+current-context: production

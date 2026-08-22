@@ -111,6 +111,13 @@ type K8sConfig struct {
 	InformerMaxMemMB  int
 	SidecarContainers []string
 	AllowInCluster    bool
+	// AllowLoopbackClusters permits cluster addresses on 127.0.0.0/8. Off by default;
+	// needed when a cluster API is reachable only on the same host, as in local
+	// development against kind or k3d.
+	AllowLoopbackClusters bool
+	// HealthCheckInterval is how often registered clusters are re-probed in the
+	// background. Zero disables monitoring.
+	HealthCheckInterval time.Duration
 }
 
 // Load reads configuration from the environment and validates it. All problems are
@@ -259,6 +266,8 @@ func Load() (*Config, error) {
 	cfg.K8s.Burst = envInt("KUBBY_K8S_BURST", 100, &errs)
 	cfg.K8s.InformerMaxMemMB = envInt("KUBBY_INFORMER_MAX_MEMORY_MB", 128, &errs)
 	cfg.K8s.AllowInCluster = envBool("KUBBY_ALLOW_IN_CLUSTER", false)
+	cfg.K8s.AllowLoopbackClusters = envBool("KUBBY_ALLOW_LOOPBACK_CLUSTERS", false)
+	cfg.K8s.HealthCheckInterval = envDuration("KUBBY_HEALTH_CHECK_INTERVAL", 5*time.Minute, &errs)
 	cfg.K8s.Timeout = envDuration("KUBBY_K8S_TIMEOUT", 30*time.Second, &errs)
 	cfg.K8s.InformerIdleTTL = envDuration("KUBBY_INFORMER_IDLE_TTL", 30*time.Minute, &errs)
 

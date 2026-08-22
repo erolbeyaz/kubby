@@ -162,6 +162,65 @@ export const sessionSchema = z.object({
 })
 export const sessionsSchema = z.object({ sessions: z.array(sessionSchema) })
 
+export const clusterSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  environment: z.enum(['prod', 'preprod', 'test', 'dr']),
+  environmentLabel: z.string(),
+  displayEnvironment: z.string(),
+  color: z.string(),
+  authSource: z.string(),
+  apiServerUrl: z.string(),
+  insecureSkipTlsVerify: z.boolean(),
+  credentialStatus: z.enum(['valid', 'invalid', 'unreachable', 'unknown']),
+  statusDetail: z.string().optional(),
+  k8sVersion: z.string().optional(),
+  nodeCount: z.number().optional(),
+  metricsAvailable: z.boolean(),
+  readOnly: z.boolean(),
+  impersonationEnabled: z.boolean(),
+  qpsLimit: z.number(),
+  lastValidatedAt: z.string().optional(),
+  accessLevel: z.string().optional(),
+})
+export const clustersSchema = z.object({ clusters: z.array(clusterSchema) })
+
+export const kubeContextSchema = z.object({
+  name: z.string(),
+  clusterName: z.string(),
+  userName: z.string(),
+  server: z.string(),
+  namespace: z.string().optional(),
+  authMethod: z.string(),
+  insecureSkipTlsVerify: z.boolean(),
+  hasCertificateAuthority: z.boolean(),
+  blocked: z.boolean(),
+  problem: z.string().optional(),
+})
+
+export const probeSchema = z.object({
+  status: z.enum(['valid', 'invalid', 'unreachable']),
+  detail: z.string().optional(),
+  k8sVersion: z.string().optional(),
+  nodeCount: z.number().optional(),
+  metricsAvailable: z.boolean(),
+  permissions: z.array(z.string()).optional(),
+})
+
+export const validateKubeconfigSchema = z.object({
+  contexts: z.array(kubeContextSchema),
+  currentContext: z.string(),
+  probe: probeSchema.optional(),
+})
+
+export const clusterGrantSchema = z.object({
+  userId: z.string(),
+  email: z.string(),
+  displayName: z.string(),
+  accessLevel: z.enum(['read', 'write']),
+})
+export const clusterGrantsSchema = z.object({ grants: z.array(clusterGrantSchema) })
+
 export const auditEventSchema = z.object({
   id: z.number(),
   occurredAt: z.string(),
@@ -183,6 +242,13 @@ export type Me = z.infer<typeof meSchema>
 export type SessionInfo = z.infer<typeof sessionSchema>
 export type AuditEvent = z.infer<typeof auditEventSchema>
 export type Role = User['role']
+export type Cluster = z.infer<typeof clusterSchema>
+export type KubeContext = z.infer<typeof kubeContextSchema>
+export type Probe = z.infer<typeof probeSchema>
+export type ValidateResult = z.infer<typeof validateKubeconfigSchema>
+export type ClusterGrant = z.infer<typeof clusterGrantSchema>
+export type Environment = Cluster['environment']
+export type CredentialStatus = Cluster['credentialStatus']
 
 // ---------------------------------------------------------------- endpoints
 
@@ -216,6 +282,42 @@ export const api = {
     request('/api/v1/users', userSchema, { method: 'POST', body }),
   updateUser: (id: string, body: { role?: Role; isActive?: boolean }) =>
     request(`/api/v1/users/${id}`, userSchema, { method: 'PATCH', body }),
+
+  clusters: (signal?: AbortSignal) => request('/api/v1/clusters', clustersSchema, { signal }),
+  cluster: (id: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${id}`, clusterSchema, { signal }),
+  validateKubeconfig: (body: { kubeconfig: string; contextName?: string }) =>
+    request('/api/v1/clusters/validate', validateKubeconfigSchema, { method: 'POST', body }),
+  createCluster: (body: {
+    name: string
+    environment: Environment
+    environmentLabel?: string
+    color?: string
+    kubeconfig: string
+    contextName?: string
+  }) => request('/api/v1/clusters', clusterSchema, { method: 'POST', body }),
+  updateCluster: (
+    id: string,
+    body: {
+      name?: string
+      environment?: Environment
+      environmentLabel?: string
+      color?: string
+      readOnly?: boolean
+      impersonationEnabled?: boolean
+      qpsLimit?: number
+    },
+  ) => request(`/api/v1/clusters/${id}`, clusterSchema, { method: 'PATCH', body }),
+  replaceCredential: (id: string, body: { kubeconfig: string; contextName?: string }) =>
+    request(`/api/v1/clusters/${id}/credentials`, clusterSchema, { method: 'PUT', body }),
+  testCluster: (id: string) =>
+    request(`/api/v1/clusters/${id}/test`, clusterSchema, { method: 'POST' }),
+  deleteCluster: (id: string) =>
+    request(`/api/v1/clusters/${id}`, emptySchema, { method: 'DELETE' }),
+  clusterGrants: (id: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${id}/grants`, clusterGrantsSchema, { signal }),
+  setClusterGrant: (id: string, body: { userId: string; accessLevel: string }) =>
+    request(`/api/v1/clusters/${id}/grants`, clusterGrantsSchema, { method: 'PUT', body }),
 
   audit: (params: { limit?: number } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams()

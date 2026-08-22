@@ -39,6 +39,14 @@ const (
 	ActionUserReactivated  = "user.reactivated"
 	ActionSessionRevoked   = "session.revoked"
 	ActionSessionsRevoked  = "session.revoked_all"
+
+	ActionClusterCreated           = "cluster.created"
+	ActionClusterDeleted           = "cluster.deleted"
+	ActionClusterCredentialUpdated = "cluster.credential.updated"
+	ActionClusterCredentialInvalid = "cluster.credential.invalidated"
+	ActionClusterLocked            = "cluster.readonly.enabled"
+	ActionClusterUnlocked          = "cluster.readonly.disabled"
+	ActionClusterAccessChanged     = "cluster.access.changed"
 )
 
 const (

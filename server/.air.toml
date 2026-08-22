@@ -2,6 +2,11 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
+# The project lives on /mnt/c, and WSL2 delivers no inotify events for the Windows
+# drive. Without polling the watcher never fires and "hot reload" silently serves a
+# stale binary — worse than no reload at all, because nothing looks wrong.
+poll = true
+poll_interval = 1000
 cmd = "go build -o ./tmp/kubby ./cmd/kubby"
 entrypoint = "./tmp/kubby"
 include_ext = ["go", "sql"]
