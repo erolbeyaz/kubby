@@ -55,9 +55,16 @@ Gerekçeler: [`docs/DECISIONS.md`](docs/DECISIONS.md).
 cp .env.example .env      # doldur — .env asla commit edilmez
 make gen-key              # KUBBY_ENCRYPTION_KEY uretir, ciktiyi .env'e yaz
 git config core.hooksPath .githooks   # gitleaks pre-commit hook'unu etkinlestir
-make setup
-make dev                  # http://localhost:8080
+make setup                # Go/Node bagimliliklari + air, goose, golangci-lint
+make dev                  # http://localhost:5173
 ```
+
+`make dev` Postgres'i baslatir, API'yi hot-reload ile calistirir ve Vite dev sunucusunu
+acar. Eksik bir arac veya `.env` degeri varsa `make dev` **baslamadan once** net bir
+hata verir (`make check-tools`).
+
+WSL2 kullaniyorsan ve Windows tarayicisindan `localhost:5173` acilmazsa, `make dev`
+ciktisindaki WSL IP adresini kullan (ornegin `http://172.24.29.86:5173`).
 
 İlk açılışta kurulum sihirbazı ilk admin hesabını oluşturur. Başka kayıt yolu yoktur.
 
@@ -66,34 +73,35 @@ make dev                  # http://localhost:8080
 
 ### Kendi registry'n ile build
 
-Tüm base image referansları `ARG REGISTRY` ile parametrelidir (ADR-027):
+Varsayılanlar upstream'e (`docker.io`, `gcr.io`) bakar — repoyu klonlayan herkes ek
+yapılandırma olmadan build edebilir. Kendi mirror'ını veya özel registry'ni kullanmak
+için (ADR-027):
 
 ```bash
-# Kendi registry'n uzerinden build
-docker build \
-  --build-arg REGISTRY=my-registry.local \
-  -t my-registry.local/kubby:0.1.0 .
+# Varsayilan: docker.io/kubby:<surum> ve :<git-sha>
+make docker VERSION=0.1.0
 
-docker push my-registry.local/kubby:0.1.0
+# Kendi registry'n
+make docker VERSION=0.1.0 REGISTRY=my-registry.local IMAGE_REPO=team/kubby
+make docker-push VERSION=0.1.0 REGISTRY=my-registry.local IMAGE_REPO=team/kubby
 
-# compose de ayni degiskeni kullanir
+# Base image'lari da kendi mirror'indan cek
+docker build --build-arg REGISTRY=my-registry.local -t kubby:0.1.0 .
+
+# compose ayni degiskenleri kullanir
 REGISTRY=my-registry.local docker compose up -d
 ```
 
-Helm ile kurarken:
+`:latest` etiketi üretilmez — hangi build'in çalıştığı her zaman belirli olmalıdır
+(`/version` ucu bunu döner). Registry kimlik bilgileri repoda tutulmaz; `docker login`
+veya CI'nın credential provider'ı kullanılır.
 
-```bash
-helm install kubby deploy/helm/kubby \
-  --set image.registry=my-registry.local \
-  --set image.repository=platform/kubby \
-  --set image.tag=0.1.0
-```
+### Özel/iç CA sertifikası
 
-### Kurumsal Root CA
-
-İç Elasticsearch ve API uçları özel bir Root CA ile imzalı. CA bundle'ı
-mount edip `KUBBY_EXTRA_CA_BUNDLE` ile göster — sistem trust store'una **eklenir**,
-onu değiştirmez (ADR-020).
+Cluster API'lerin veya log hedeflerin self-signed ya da iç bir PKI ile imzalıysa, CA
+bundle'ını mount edip `KUBBY_EXTRA_CA_BUNDLE` ile göster — sistem trust store'una
+**eklenir**, onu değiştirmez (ADR-020). Proxy arkasındaysan standart
+`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` değişkenleri desteklenir.
 
 ## Geliştirme kuralları
 

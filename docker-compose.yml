@@ -1,0 +1,57 @@
+# Image sources are overridable for any mirror or private registry (ADR-027):
+#   REGISTRY=my-registry.local docker compose up -d
+name: kubby
+
+services:
+  postgres:
+    image: ${REGISTRY:-docker.io}/library/postgres:18.6@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${KUBBY_DB_NAME:-kubby}
+      POSTGRES_USER: ${KUBBY_DB_USER:-kubby}
+      POSTGRES_PASSWORD: ${KUBBY_DB_PASSWORD:?KUBBY_DB_PASSWORD is required — copy .env.example to .env}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # PostgreSQL 18+ expects a single mount at /var/lib/postgresql, not at .../data,
+      # so that pg_upgrade --link works across a mount boundary.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KUBBY_DB_USER:-kubby} -d ${KUBBY_DB_NAME:-kubby}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  kubby:
+    profiles: ["full"]
+    build:
+      context: .
+      args:
+        REGISTRY: ${REGISTRY:-docker.io}
+        VERSION: ${VERSION:-dev}
+    image: ${REGISTRY:-docker.io}/${IMAGE_REPO:-kubby}:${TAG:-dev}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: [.env]
+    environment:
+      KUBBY_DB_HOST: postgres
+    ports:
+      - "8080:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/kubby", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres-data:

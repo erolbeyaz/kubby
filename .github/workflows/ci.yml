@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27.0"
+  NODE_VERSION: "24.19.0"
+  GOLANGCI_VERSION: "v2.13.1"
+
+jobs:
+  server:
+    name: Server (build, lint, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: server/go.sum
+
+      - name: Verify formatting
+        working-directory: server
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Build
+        working-directory: server
+        run: go build ./...
+
+      - name: Vet
+        working-directory: server
+        run: go vet ./...
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_VERSION }}
+          working-directory: server
+
+      # TZ is pinned so a timezone-dependent bug cannot pass on a UTC runner (ADR-026).
+      - name: Test
+        working-directory: server
+        env:
+          TZ: UTC
+        run: go test -race ./...
+
+  web:
+    name: Web (lint, typecheck, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # npm ci, never npm install: the lockfile is the source of truth (ADR-025).
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Typecheck
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: web
+        run: npm run test -- --run
+
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    needs: [server, web]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: kubby:ci
+          build-args: |
+            VERSION=ci-${{ github.sha }}
+            COMMIT_SHA=${{ github.sha }}
+
+      # The image must stay shell-less: distroless is a security control, not a detail.
+      - name: Assert the image has no shell
+        run: |
+          if docker run --rm --entrypoint /bin/sh kubby:ci -c 'exit 0' 2>/dev/null; then
+            echo "A shell is present in the runtime image; distroless base was lost."
+            exit 1
+          fi
+          echo "No shell in the runtime image."
+
+      - name: Assert the image runs as non-root
+        run: |
+          user=$(docker image inspect kubby:ci --format '{{.Config.User}}')
+          if [ "$user" != "65532:65532" ]; then
+            echo "Image runs as '$user', want 65532:65532"
+            exit 1
+          fi
+          echo "Image runs as $user."

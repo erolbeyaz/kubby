@@ -3,11 +3,20 @@
 useDefault = true
 
 [allowlist]
-description = "Documentation placeholders — never real secrets"
+description = "Placeholders and deliberate test fixtures — never real secrets"
+
 paths = [
+  # Documentation placeholders.
   '''\.env\.example$''',
   '''docs/ARCHITECTURE\.md$''',
+
+  # This file exists to prove the redaction layer catches secret-shaped strings, so it
+  # necessarily contains fake JWTs, tokens and PEM blocks. Allowlisted by exact path
+  # rather than by a "tests" pattern: a real secret must never be able to hide in a
+  # test file elsewhere in the tree.
+  '''server/internal/logging/redact_test\.go$''',
 ]
+
 regexes = [
   '''CHANGE_ME[A-Z_0-9]*''',
   '''<from-secret>''',

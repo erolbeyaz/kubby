@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/*
+ * Kubby visual language — dense, keyboard-first, near-monochrome with a single accent.
+ * Dark is the default; the light palette exists so the tokens stay honest, but the tool
+ * is designed to be read in dark.
+ */
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+
+  /*
+   * One type scale for the whole app. Density still matters — this is a tool for
+   * reading long resource lists — but 13px was tiring to read for long stretches.
+   */
+  --text-display: 21px;  /* wordmark */
+  --text-title: 17px;    /* screen and card titles */
+  --text-body: 15px;     /* default: inputs, buttons, primary content */
+  --text-secondary-size: 13px; /* labels, hints, table headers */
+  --text-micro: 12px;    /* status bar, timestamps, badges */
+
+  /* Sharp, not rounded. Nothing here should look like a consumer app. */
+  --radius-sharp: 2px;
+  --radius-panel: 3px;
+
+  /* Dense vertical rhythm: rows are scannable, not comfortable. */
+  --spacing-row: 1.75rem;
+  --spacing-rail: 3rem;
+  --spacing-panel: 17rem;
+}
+
+:root,
+[data-theme="dark"] {
+  --bg-base: #131313;
+  --bg-surface: #181818;
+  --bg-raised: #1f1f1f;
+  --bg-overlay: #252525;
+  --bg-hover: #262626;
+  --bg-active: #2d2d2d;
+
+  --border-subtle: #262626;
+  --border-default: #303030;
+  --border-strong: #3d3d3d;
+
+  --text-primary: #e8e8e8;
+  --text-secondary: #9a9a9a;
+  --text-muted: #6b6b6b;
+  --text-inverse: #131313;
+
+  --accent: #10b981;
+  --accent-hover: #34d399;
+  --accent-muted: #10b98126;
+
+  --status-error: #f43f5e;
+  --status-warn: #f59e0b;
+  --status-ok: #10b981;
+  --status-info: #38bdf8;
+  --status-unknown: #6b6b6b;
+
+  /* Environment colours — prod must be unmistakable at a glance. */
+  --env-prod: #f43f5e;
+  --env-preprod: #f59e0b;
+  --env-test: #38bdf8;
+  --env-dr: #a78bfa;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-base: #ffffff;
+  --bg-surface: #fafafa;
+  --bg-raised: #f4f4f4;
+  --bg-overlay: #ffffff;
+  --bg-hover: #eeeeee;
+  --bg-active: #e4e4e4;
+
+  --border-subtle: #e8e8e8;
+  --border-default: #dcdcdc;
+  --border-strong: #c4c4c4;
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #5a5a5a;
+  --text-muted: #8a8a8a;
+  --text-inverse: #ffffff;
+
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-muted: #0596691f;
+
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* Focus must always be visible — this tool is driven from the keyboard. */
+  :focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background-color: var(--accent-muted);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border: 2px solid var(--bg-base);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+}
+
+@layer components {
+  /* A single keyboard hint chip, used in the command palette and status bar. */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    height: 1.25rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sharp);
+    background-color: var(--bg-raised);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1;
+  }
+}
