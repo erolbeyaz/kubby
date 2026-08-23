@@ -37,6 +37,9 @@ export default defineConfig({
           target: API_TARGET,
           changeOrigin: true,
           headers: { Origin: API_TARGET },
+          // Log streaming upgrades to a WebSocket on /api. Without this the proxy
+          // answers the upgrade itself and the connection closes before it opens.
+          ws: true,
         },
       ]),
     ),

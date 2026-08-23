@@ -267,6 +267,96 @@ const gaugeSchema = z.object({
   unit: z.string(),
 })
 
+// ---------------------------------------------------------------- problem detection
+
+export const findingSchema = z.object({
+  category: z.string(),
+  severity: z.string(),
+  kind: z.string(),
+  namespace: z.string().optional(),
+  name: z.string(),
+  reason: z.string(),
+  detail: z.string(),
+  container: z.string().optional(),
+  count: z.number().optional(),
+  lastSeen: z.string().optional(),
+  typeKey: z.string().optional(),
+})
+
+export type Finding = z.infer<typeof findingSchema>
+
+export const healthReportSchema = z.object({
+  findings: z.array(findingSchema),
+  failed: z.record(z.string(), z.string()).optional(),
+  counts: z.record(z.string(), z.number()),
+})
+
+export type HealthReport = z.infer<typeof healthReportSchema>
+
+export const clusterCardSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  environment: z.string().optional(),
+  colour: z.string().optional(),
+  status: z.string(),
+  unreachable: z.boolean(),
+  error: z.string().optional(),
+  counts: z.record(z.string(), z.number()),
+  top: z.array(findingSchema).optional(),
+  checkedAt: z.string(),
+  stale: z.boolean(),
+})
+
+export type ClusterCard = z.infer<typeof clusterCardSchema>
+
+const fleetSchema = z.object({ clusters: z.array(clusterCardSchema) })
+
+export const containerSchema = z.object({
+  name: z.string(),
+  role: z.enum(['app', 'sidecar', 'init']),
+})
+
+export type PodContainer = z.infer<typeof containerSchema>
+
+const containersSchema = z.object({ containers: z.array(containerSchema) })
+
+const terminationSchema = z.object({
+  reason: z.string().optional(),
+  exitCode: z.number(),
+  signal: z.number().optional(),
+  message: z.string().optional(),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+})
+
+export const restartSummarySchema = z.object({
+  app: z.number(),
+  sidecar: z.number(),
+  init: z.number(),
+  details: z
+    .array(
+      z.object({
+        name: z.string(),
+        role: z.enum(['app', 'sidecar', 'init']),
+        count: z.number(),
+        last: terminationSchema.optional(),
+      }),
+    )
+    .optional(),
+})
+
+export type RestartSummary = z.infer<typeof restartSummarySchema>
+
+const describeSchema = z.object({ text: z.string() })
+
+export const secretKeysSchema = z.object({
+  keys: z.array(z.object({ key: z.string(), bytes: z.number() })),
+})
+
+export type SecretKey = z.infer<typeof secretKeysSchema>['keys'][number]
+
+const revealSchema = z.object({ key: z.string(), value: z.string() })
+
 export const overviewSchema = z.object({
   nodes: z.number(),
   nodesReady: z.number(),
@@ -433,6 +523,55 @@ export const api = {
       { signal },
     )
   },
+
+  health: (clusterId: string, namespaces: string[] = [], signal?: AbortSignal) => {
+    const suffix = namespaces.length > 0 ? `?namespace=${encodeURIComponent(namespaces.join(','))}` : ''
+    return request(`/api/v1/clusters/${clusterId}/health${suffix}`, healthReportSchema, { signal })
+  },
+
+  fleetHealth: (signal?: AbortSignal) => request('/api/v1/fleet/health', fleetSchema, { signal }),
+
+  podContainers: (clusterId: string, namespace: string, name: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/pod/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/containers`,
+      containersSchema,
+      { signal },
+    ),
+
+  podRestarts: (clusterId: string, namespace: string, name: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/pod/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/restarts`,
+      restartSummarySchema,
+      { signal },
+    ),
+
+  describe: (
+    clusterId: string,
+    typeKey: string,
+    params: { name: string; namespace?: string },
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams({ name: params.name })
+    if (params.namespace) query.set('namespace', params.namespace)
+
+    return request(`/api/v1/clusters/${clusterId}/describe/${typeKey}?${query}`, describeSchema, { signal })
+  },
+
+  secretKeys: (clusterId: string, namespace: string, name: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/secret/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/keys`,
+      secretKeysSchema,
+      { signal },
+    ),
+
+  // One key at a time, deliberately: each disclosure is its own decision and leaves its
+  // own audit record on the server.
+  revealSecret: (clusterId: string, namespace: string, name: string, key: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/secret/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/reveal?key=${encodeURIComponent(key)}`,
+      revealSchema,
+      { signal },
+    ),
 
   audit: (params: { limit?: number } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams()

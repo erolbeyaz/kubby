@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -49,7 +49,7 @@ function mockList(rows: unknown[]) {
   return requests
 }
 
-function renderTable(onOpen = vi.fn()) {
+function renderTable(onOpen = vi.fn(), onContextMenu = vi.fn()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
@@ -65,6 +65,7 @@ function renderTable(onOpen = vi.fn()) {
         onPrefetch={() => undefined}
         onNavigate={() => undefined}
         onDismiss={() => undefined}
+        onContextMenu={onContextMenu}
       />
     </QueryClientProvider>,
   )
@@ -158,5 +159,28 @@ describe('ResourceTable', () => {
 
     expect(await screen.findByText('payments-api-1')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: /^Namespace/ })).toBeInTheDocument()
+  })
+
+  // The reported bug: only the name was clickable, so a click on the rest of the row
+  // did nothing and read as a click that had not registered.
+  it('opens the object from anywhere in the row', async () => {
+    mockList([pod('payments-api-1')])
+    const onOpen = renderTable()
+
+    await userEvent.click(await screen.findByText('1/1'))
+
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ name: 'payments-api-1' }))
+  })
+
+  it('offers the action menu on right-click', async () => {
+    mockList([pod('payments-api-1')])
+    const onContextMenu = vi.fn()
+    renderTable(vi.fn(), onContextMenu)
+
+    fireEvent.contextMenu(await screen.findByText('payments-api-1'))
+
+    const [row, at] = onContextMenu.mock.calls[0] as [{ name: string }, { x: number; y: number }]
+    expect(row.name).toBe('payments-api-1')
+    expect(typeof at.x).toBe('number')
   })
 })

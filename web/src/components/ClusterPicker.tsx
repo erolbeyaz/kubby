@@ -9,6 +9,8 @@ interface ClusterPickerProps {
   onSelect: (clusterId: string) => void
   onManage: () => void
   canManage: boolean
+  /** Fill the container rather than sitting at a natural width. */
+  fullWidth?: boolean
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -25,7 +27,14 @@ const STATUS_COLOR: Record<string, string> = {
  * the detail are all "within this cluster". Reaching it through a management screen
  * made switching feel like an administrative act rather than the routine move it is.
  */
-export function ClusterPicker({ clusters, current, onSelect, onManage, canManage }: ClusterPickerProps) {
+export function ClusterPicker({
+  clusters,
+  current,
+  onSelect,
+  onManage,
+  canManage,
+  fullWidth = false,
+}: ClusterPickerProps) {
   const [open, setOpen] = useState(false)
   const container = useRef<HTMLDivElement>(null)
 
@@ -48,16 +57,16 @@ export function ClusterPicker({ clusters, current, onSelect, onManage, canManage
   }, [open])
 
   return (
-    <div ref={container} className="relative">
+    <div ref={container} className={fullWidth ? 'relative w-full' : 'relative'}>
       <button
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label="Select cluster"
         onClick={() => setOpen((value) => !value)}
-        className="flex h-8 items-center gap-2 border px-2.5 transition-colors"
+        className={`flex h-8 items-center gap-2 border px-2.5 transition-colors ${fullWidth ? 'w-full' : ''}`}
         style={{
-          minWidth: '11rem',
+          minWidth: fullWidth ? undefined : '11rem',
           borderRadius: 'var(--radius-sharp)',
           borderColor: open ? 'var(--accent)' : 'var(--border-default)',
           backgroundColor: 'var(--bg-raised)',
@@ -92,7 +101,7 @@ export function ClusterPicker({ clusters, current, onSelect, onManage, canManage
       {open && (
         <div
           role="listbox"
-          className="absolute left-0 z-50 mt-1 w-72 border shadow-lg"
+          className={`absolute left-0 z-50 mt-1 border shadow-lg ${fullWidth ? 'w-full min-w-[16rem]' : 'w-72'}`}
           style={{
             backgroundColor: 'var(--bg-overlay)',
             borderColor: 'var(--border-strong)',
@@ -119,7 +128,7 @@ export function ClusterPicker({ clusters, current, onSelect, onManage, canManage
                 className="flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors hover:bg-[var(--bg-hover)]"
                 style={{
                   borderRadius: 'var(--radius-sharp)',
-                  backgroundColor: cluster.id === current?.id ? 'var(--bg-active)' : 'transparent',
+                  backgroundColor: cluster.id === current?.id ? 'var(--bg-active)' : undefined,
                 }}
               >
                 <span

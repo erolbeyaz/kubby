@@ -7,6 +7,10 @@ import { LazyYamlViewer, warmYamlViewer } from '@/components/LazyYamlViewer'
 import { ApiError, api, type ResourceRow } from '@/lib/api'
 import { formatAbsolute, formatAge } from '@/lib/time'
 
+import { availableActionsFor } from './actions'
+import { RestartBadge } from './RestartBadge'
+import { SecretKeys } from './SecretKeys'
+
 import { statusColor, typeKeyForKind } from './statusColor'
 import type { NavigationTarget } from './ResourceTable'
 
@@ -17,6 +21,8 @@ interface ObjectDrawerProps {
   row: ResourceRow
   onClose: () => void
   onNavigate: (target: NavigationTarget) => void
+  /** Opens this object in the bottom dock. */
+  onOpenDock: (kind: 'logs' | 'describe') => void
 }
 
 type Pane = 'summary' | 'yaml'
@@ -28,7 +34,7 @@ type Pane = 'summary' | 'yaml'
  * keeping the list on screen means the next row is one click away instead of a
  * navigation round trip.
  */
-export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigate }: ObjectDrawerProps) {
+export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigate, onOpenDock }: ObjectDrawerProps) {
   const [pane, setPane] = useState<Pane>('summary')
 
   // Opening an object is a good predictor of reading its YAML, so the editor is fetched
@@ -74,7 +80,7 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
           {row.name}
         </h2>
 
-        <ActionIcons kind={kind} />
+        <ActionIcons kind={kind} onOpenDock={onOpenDock} />
 
         <button
           type="button"
@@ -110,7 +116,21 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
         {/* The summary draws from the row the list already holds, so it is on screen the
             moment the panel opens; the fetched object fills in the rest behind it. */}
         {!error && pane === 'summary' && (
-          <Summary object={data ?? {}} row={row} kind={kind} loading={object.isLoading} onNavigate={onNavigate} />
+          <>
+            <Summary object={data ?? {}} row={row} kind={kind} loading={object.isLoading} onNavigate={onNavigate} />
+
+            {kind === 'Secret' && (
+              <Group title="Data">
+                <SecretKeys clusterId={clusterId} namespace={row.namespace ?? ''} name={row.name} />
+              </Group>
+            )}
+
+            {kind === 'Pod' && (
+              <Group title="Restarts">
+                <RestartBadge clusterId={clusterId} namespace={row.namespace ?? ''} pod={row.name} detailed />
+              </Group>
+            )}
+          </>
         )}
 
         {pane === 'yaml' &&
@@ -169,11 +189,6 @@ function Summary({
         <Property label="Created">
           {created ? `${formatAge(created)} ago · ${formatAbsolute(created)}` : '—'}
         </Property>
-        {row.fields['restarts'] && row.fields['restarts'] !== '0' && (
-          <Property label="Restarts">
-            <span style={{ color: 'var(--status-warn)' }}>{row.fields['restarts']}</span>
-          </Property>
-        )}
         {row.namespace && (
           <Property label="Namespace">
             <LinkValue value={row.namespace} onClick={() => onNavigate({ namespace: row.namespace ?? '' })} />
@@ -473,22 +488,30 @@ function LinkValue({ value, onClick }: { value: string; onClick?: (() => void) |
 }
 
 /** Actions that exist, and the ones later phases will enable. */
-function ActionIcons({ kind }: { kind: string }) {
-  const planned = kind === 'Pod' ? ['Logs (phase 5)', 'Shell (phase 8)', 'Delete (phase 7)'] : ['Edit (phase 7)', 'Delete (phase 7)']
+function ActionIcons({
+  kind,
+  onOpenDock,
+}: {
+  kind: string
+  onOpenDock: (kind: 'logs' | 'describe') => void
+}) {
+  const actions = availableActionsFor(kind)
+  if (actions.length === 0) return null
 
   return (
     <span className="flex shrink-0 items-center gap-0.5">
-      {planned.map((title) => (
-        <span
-          key={title}
-          title={title}
-          className="flex h-7 w-7 items-center justify-center"
-          style={{ color: 'var(--text-muted)', opacity: 0.35, cursor: 'not-allowed' }}
+      {actions.map((action) => (
+        <button
+          key={action.id}
+          type="button"
+          onClick={() => action.dockTab && onOpenDock(action.dockTab)}
+          title={action.shortcut ? `${action.label} (${action.shortcut})` : action.label}
+          aria-label={action.label}
+          className="flex h-7 w-7 items-center justify-center transition-colors hover:bg-[var(--bg-hover)]"
+          style={{ borderRadius: 'var(--radius-sharp)', color: 'var(--text-muted)' }}
         >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
-            <path d="M3 4h10M3 8h10M3 12h6" strokeLinecap="round" />
-          </svg>
-        </span>
+          {action.icon}
+        </button>
       ))}
     </span>
   )

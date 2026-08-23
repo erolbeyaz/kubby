@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Callout } from '@/components/Callout'
 import { ApiError, api, type Cluster, type Gauge } from '@/lib/api'
 
+import { FleetHealth } from '@/features/health/FleetHealth'
+
 import { Donut } from './Donut'
 import type { NavigationTarget } from './ResourceTable'
 import { typeKeyForKind } from './statusColor'
@@ -10,10 +12,11 @@ import { typeKeyForKind } from './statusColor'
 interface ClusterOverviewProps {
   cluster: Cluster
   onNavigate: (target: NavigationTarget) => void
+  onOpenCluster: (clusterId: string) => void
 }
 
 /** The cluster at a glance: how full it is, and whether anything is wrong. */
-export function ClusterOverview({ cluster, onNavigate }: ClusterOverviewProps) {
+export function ClusterOverview({ cluster, onNavigate, onOpenCluster }: ClusterOverviewProps) {
   const overview = useQuery({
     queryKey: ['overview', cluster.id],
     queryFn: ({ signal }) => api.overview(cluster.id, signal),
@@ -37,6 +40,13 @@ export function ClusterOverview({ cluster, onNavigate }: ClusterOverviewProps) {
 
   return (
     <div className="h-full overflow-auto">
+      {/* The rest of the fleet, above this cluster's own numbers. Reading one cluster
+          with the others out of view is how a fleet-wide outage reads as a single
+          cluster's problem. */}
+      <div className="border-b px-4 pb-2 pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+        <FleetHealth compact currentId={cluster.id} onOpen={onOpenCluster} />
+      </div>
+
       <div
         className="grid gap-px border-b"
         style={{

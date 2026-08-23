@@ -52,6 +52,10 @@
   --accent-hover: #34d399;
   --accent-muted: #10b98126;
 
+  /* Log and terminal output sit on their own near-black ground: output is read as a
+     stream rather than as part of the interface, and the surface behind it should say so. */
+  --bg-terminal: #0b0b0b;
+
   --status-error: #f43f5e;
   --status-warn: #f59e0b;
   --status-ok: #10b981;
@@ -70,6 +74,9 @@
 [data-theme="light"] {
   --bg-base: #ffffff;
   --bg-surface: #fafafa;
+  /* Log output keeps its dark ground under the light theme too: coloured terminal
+     output is written for a dark background and washes out on white. */
+  --bg-terminal: #16181d;
   --bg-raised: #f4f4f4;
   --bg-overlay: #ffffff;
   --bg-hover: #eeeeee;
@@ -156,5 +163,221 @@
     font-family: var(--font-mono);
     font-size: 11px;
     line-height: 1;
+  }
+
+  /*
+   * A row in the right-click menu.
+   *
+   * The menu sits on --bg-overlay and the generic hover token is one shade away from it,
+   * which left no visible difference between the item under the pointer and the rest.
+   * Hovering here changes the ground, the text and the leading edge together, so where
+   * the pointer is cannot be mistaken.
+   */
+  .menu-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius-sharp);
+    text-align: left;
+    font-size: var(--text-secondary-size);
+    color: var(--text-secondary);
+    transition:
+      background-color 90ms ease,
+      color 90ms ease;
+  }
+
+  .menu-item:hover:not(:disabled),
+  .menu-item:focus-visible:not(:disabled) {
+    background-color: var(--accent-muted);
+    color: var(--accent);
+    box-shadow: inset 2px 0 0 0 var(--accent);
+    outline: none;
+  }
+
+  .menu-item--destructive {
+    color: var(--status-error);
+  }
+
+  .menu-item--destructive:hover:not(:disabled),
+  .menu-item--destructive:focus-visible:not(:disabled) {
+    background-color: color-mix(in srgb, var(--status-error) 16%, transparent);
+    color: var(--status-error);
+    box-shadow: inset 2px 0 0 0 var(--status-error);
+  }
+
+  .menu-item:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
+  /*
+   * A toolbar control.
+   *
+   * These live in CSS rather than inline styles because an inline `style` attribute
+   * always beats a stylesheet rule: the hover written as a utility class never applied,
+   * and the bar looked inert under the pointer.
+   */
+  .tool-button {
+    display: flex;
+    height: 1.75rem;
+    width: 1.75rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sharp);
+    color: var(--text-secondary);
+    transition:
+      background-color 90ms ease,
+      border-color 90ms ease,
+      color 90ms ease;
+  }
+
+  .tool-button:hover:not(:disabled),
+  .tool-button:focus-visible:not(:disabled) {
+    background-color: var(--bg-active);
+    border-color: var(--border-strong);
+    color: var(--accent);
+    outline: none;
+  }
+
+  .tool-button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .tool-button--active {
+    background-color: var(--accent-muted);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* The small controls that sit inside the search field. */
+  .tool-chip {
+    display: flex;
+    height: 1.25rem;
+    min-width: 1.25rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.15rem;
+    border-radius: var(--radius-sharp);
+    color: var(--text-muted);
+    transition:
+      background-color 90ms ease,
+      color 90ms ease;
+  }
+
+  .tool-chip:hover,
+  .tool-chip:focus-visible {
+    background-color: var(--bg-active);
+    color: var(--accent);
+    outline: none;
+  }
+
+  .tool-chip--active {
+    background-color: var(--accent-muted);
+    color: var(--accent);
+  }
+
+  /*
+   * The author's signature, centred in the status bar.
+   *
+   * It is drawn in a near-white ink for dark backgrounds, so under the light theme it is
+   * filtered down rather than swapped for a second file: one asset, two grounds.
+   */
+  .signature {
+    height: 1.15rem;
+    width: auto;
+    /* The artwork's ink is a pale blue-grey; on the dark strip it is pushed to white so
+       it reads as a signature rather than as a smudge. */
+    filter: brightness(1.7) saturate(0);
+    opacity: 0.9;
+    transition: opacity 140ms ease;
+  }
+
+  .signature-slot:hover .signature {
+    opacity: 1;
+  }
+
+  /*
+   * The author's monogram, which appears above the signature on hover.
+   *
+   * A small mark rather than a large one: this says who made the thing, it is not a
+   * feature of it. It is anchored to the signature rather than to the strip, so it sits
+   * over the middle of the mark wherever the strip's other text puts it, and it never
+   * takes the pointer — something over the status bar that swallowed clicks would be a
+   * nuisance rather than a flourish.
+   *
+   * The tile carries its own ground, so it is not filtered per theme.
+   */
+  .monogram {
+    position: absolute;
+    bottom: calc(100% + 0.4rem);
+    left: 50%;
+    height: 2.5rem;
+    width: auto;
+    opacity: 0;
+    pointer-events: none;
+    border-radius: 0.6rem;
+    box-shadow: 0 4px 14px rgb(0 0 0 / 0.45);
+    transform: translate(-50%, 0.4rem);
+    transition:
+      opacity 160ms ease,
+      transform 200ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+
+  .signature-slot:hover .monogram {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  /* A flourish is exactly the kind of motion someone may have asked not to see. */
+  @media (prefers-reduced-motion: reduce) {
+    .monogram {
+      transition: opacity 120ms ease;
+      transform: translate(-50%, 0);
+    }
+  }
+
+  /* White on white is nothing, so the light theme is the one case that darkens it. */
+  [data-theme='light'] .signature {
+    filter: brightness(0.32) saturate(1.4);
+    opacity: 0.65;
+  }
+
+  /* A header view button. Same reason as .menu-item: the hover has to live in CSS or an
+     inline style silently wins over it. */
+  .nav-chip {
+    display: flex;
+    height: 1.875rem;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0 0.6rem;
+    border-radius: var(--radius-sharp);
+    font-size: var(--text-secondary-size);
+    color: var(--text-secondary);
+    transition:
+      background-color 90ms ease,
+      color 90ms ease;
+  }
+
+  .nav-chip:hover:not(:disabled),
+  .nav-chip:focus-visible:not(:disabled) {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+    outline: none;
+  }
+
+  .nav-chip--active {
+    background-color: var(--accent-muted);
+    color: var(--accent);
+  }
+
+  .nav-chip:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 }

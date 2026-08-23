@@ -1,3 +1,5 @@
+import monogram from '@/assets/monogram.png'
+import signature from '@/assets/signature.png'
 import type { VersionInfo } from '@/lib/api'
 
 export type ConnectionState = 'connecting' | 'ready' | 'degraded' | 'offline'
@@ -26,7 +28,7 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
 export function StatusBar({ connection, version, detail }: StatusBarProps) {
   return (
     <footer
-      className="flex h-7 shrink-0 items-center gap-3 border-t px-3 font-mono text-[12px]"
+      className="relative flex h-7 shrink-0 items-center gap-3 border-t px-3 font-mono text-[12px]"
       style={{
         backgroundColor: 'var(--bg-surface)',
         borderColor: 'var(--border-subtle)',
@@ -43,6 +45,14 @@ export function StatusBar({ connection, version, detail }: StatusBarProps) {
       </span>
 
       {detail && <span className="truncate">{detail}</span>}
+
+      {/* Centred on the strip itself rather than in the flow, so it stays put whatever
+          the status text on either side happens to say. Only the signature takes the
+          pointer; the rest of the strip is left alone. */}
+      <span className="signature-slot absolute left-1/2 flex -translate-x-1/2 items-center">
+        <img src={monogram} alt="" aria-hidden="true" className="monogram select-none" />
+        <img src={signature} alt="powered by erolbeyaz" className="signature select-none" />
+      </span>
 
       <span className="ml-auto flex items-center gap-3">
         <span className="flex items-center gap-1">

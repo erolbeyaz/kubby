@@ -5,6 +5,8 @@ interface IconProps {
 
 export type IconName =
   | 'health'
+  | 'warning'
+  | 'plus'
   | 'clusters'
   | 'workloads'
   | 'network'
@@ -21,6 +23,8 @@ export type IconName =
 // Inline 16px stroke icons keep the bundle self-contained and the weight consistent.
 const PATHS: Record<IconName, string> = {
   health: 'M2 8h3l2-5 3 10 2-5h3',
+  warning: 'M8 2 1.5 13.5h13L8 2zM8 6.5v3.2M8 11.6h.01',
+  plus: 'M8 3v10M3 8h10',
   clusters: 'M8 2 2 5v6l6 3 6-3V5L8 2zM2 5l6 3 6-3M8 8v6',
   workloads: 'M2 3h5v5H2zM9 3h5v5H9zM2 9h5v4H2zM9 9h5v4H9z',
   network: 'M8 2v4M8 10v4M3 8h4M9 8h4M8 8a1 1 0 100-2 1 1 0 000 2z',

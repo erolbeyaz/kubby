@@ -43,11 +43,10 @@ export function CopyButton({ value, label = 'Copy' }: CopyButtonProps) {
       onClick={() => void copy()}
       aria-label={label}
       title={`${label} to clipboard`}
-      className="flex h-7 items-center gap-1.5 border px-2 transition-colors hover:bg-[var(--bg-hover)]"
+      className="flex h-7 items-center gap-1.5 border bg-[var(--bg-surface)] px-2 transition-colors hover:bg-[var(--bg-active)]"
       style={{
         borderRadius: 'var(--radius-sharp)',
         borderColor: state === 'idle' ? 'var(--border-default)' : colour,
-        backgroundColor: 'var(--bg-surface)',
         fontSize: 'var(--text-micro)',
         color: colour,
       }}

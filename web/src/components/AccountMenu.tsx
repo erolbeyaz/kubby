@@ -111,12 +111,7 @@ export function AccountMenu({ me, onSelect, onSignOut }: AccountMenuProps) {
                   onSelect(item.id)
                   setOpen(false)
                 }}
-                className="flex h-8 w-full items-center gap-2.5 px-2.5 text-left transition-colors hover:bg-[var(--bg-hover)]"
-                style={{
-                  borderRadius: 'var(--radius-sharp)',
-                  fontSize: 'var(--text-secondary-size)',
-                  color: 'var(--text-secondary)',
-                }}
+                className="menu-item h-8 gap-2.5 px-2.5"
               >
                 <Icon name={item.icon} />
                 {item.label}
@@ -132,18 +127,7 @@ export function AccountMenu({ me, onSelect, onSignOut }: AccountMenuProps) {
                 setOpen(false)
                 onSignOut()
               }}
-              className="flex h-8 w-full items-center gap-2.5 px-2.5 text-left font-medium transition-colors"
-              style={{
-                borderRadius: 'var(--radius-sharp)',
-                fontSize: 'var(--text-secondary-size)',
-                color: 'var(--status-error)',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--status-error) 14%, transparent)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent'
-              }}
+              className="menu-item menu-item--destructive h-8 gap-2.5 px-2.5 font-medium"
             >
               <Icon name="logout" />
               Sign out

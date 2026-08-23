@@ -237,11 +237,15 @@ func (h *userHandlers) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type auditItem struct {
-		ID           int64          `json:"id"`
-		OccurredAt   string         `json:"occurredAt"`
-		ActorEmail   string         `json:"actorEmail"`
-		Action       string         `json:"action"`
-		Result       string         `json:"result"`
+		ID         int64  `json:"id"`
+		OccurredAt string `json:"occurredAt"`
+		ActorEmail string `json:"actorEmail"`
+		Action     string `json:"action"`
+		Result     string `json:"result"`
+		// A resource name alone is ambiguous: the same secret name exists in many
+		// namespaces and many clusters, so the record has to say which.
+		ClusterID    string         `json:"clusterId,omitempty"`
+		Namespace    string         `json:"namespace,omitempty"`
 		ResourceKind string         `json:"resourceKind,omitempty"`
 		ResourceName string         `json:"resourceName,omitempty"`
 		IPAddress    string         `json:"ipAddress,omitempty"`
@@ -257,10 +261,14 @@ func (h *userHandlers) listAudit(w http.ResponseWriter, r *http.Request) {
 			ActorEmail:   e.ActorEmail,
 			Action:       e.Action,
 			Result:       e.Result,
+			Namespace:    e.Namespace,
 			ResourceKind: e.ResourceKind,
 			ResourceName: e.ResourceName,
 			RequestID:    e.RequestID,
 			Details:      e.Details,
+		}
+		if e.ClusterID != nil {
+			item.ClusterID = e.ClusterID.String()
 		}
 		if e.IPAddress != nil {
 			item.IPAddress = e.IPAddress.String()

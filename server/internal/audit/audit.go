@@ -47,6 +47,11 @@ const (
 	ActionClusterLocked            = "cluster.readonly.enabled"
 	ActionClusterUnlocked          = "cluster.readonly.disabled"
 	ActionClusterAccessChanged     = "cluster.access.changed"
+
+	// ActionSecretRevealed records that someone read a secret's value. The event carries
+	// which key was read, never the value: audit records access, not content.
+	ActionSecretRevealed = "secret.revealed"
+	ActionSecretCopied   = "secret.copied"
 )
 
 const (

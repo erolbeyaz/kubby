@@ -22,7 +22,7 @@ export function AuthCard({ title, subtitle, children, footer }: AuthCardProps) {
         }}
       >
         <div className="mb-6 flex flex-col items-center text-center">
-          <Logo size={56} showWordmark />
+          <Logo size={80} variant="full" />
           <h1
             className="mt-5 font-semibold"
             style={{ fontSize: 'var(--text-title)', color: 'var(--text-primary)' }}

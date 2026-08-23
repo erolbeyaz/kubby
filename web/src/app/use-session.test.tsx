@@ -88,9 +88,9 @@ describe('App routing by session state', () => {
     })
     renderApp()
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Select cluster' })).toBeInTheDocument(),
-    )
+    // The workspace is up once its header is: the cluster picker lives on the rail
+    // inside a cluster, and this session has none.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Overview' })).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /account: first admin/i })).toBeInTheDocument()
   })
 

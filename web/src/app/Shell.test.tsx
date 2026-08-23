@@ -80,30 +80,49 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** The rail — and the picker on it — exists only inside a cluster. */
+function inCluster() {
+  window.history.replaceState(null, '', '/clusters/c1/-/pods')
+}
+
 describe('Shell', () => {
-  // The picker governs the window, so it is the first thing in it.
-  it('puts the cluster picker in the top-left corner', async () => {
+  // The picker heads the rail everything under it belongs to.
+  it('puts the cluster picker at the top of the cluster rail', async () => {
     mockApi()
+    inCluster()
     renderShell()
 
     expect(await screen.findByRole('button', { name: 'Select cluster' })).toBeInTheDocument()
+  })
+
+  // Overview and Health are about the whole cluster rather than one kind of object, so
+  // they head the window instead of sitting among the kinds.
+  it('puts the whole-cluster views in the header', async () => {
+    mockApi()
+    inCluster()
+    renderShell()
+
+    for (const view of ['Overview', 'Health']) {
+      expect(await screen.findByRole('button', { name: view })).toBeInTheDocument()
+    }
   })
 
   it('offers no navigation that leads nowhere', async () => {
     mockApi()
     renderShell()
 
-    await screen.findByRole('button', { name: 'Select cluster' })
+    await screen.findByRole('button', { name: 'Overview' })
 
     // These were rail entries with nothing behind them; a menu that does nothing is
     // worse than an absent one.
-    for (const dead of ['Health', 'Workloads', 'Network', 'Storage', 'Events', 'Terminal']) {
+    for (const dead of ['Workloads', 'Network', 'Storage', 'Events', 'Terminal']) {
       expect(screen.queryByRole('button', { name: dead })).not.toBeInTheDocument()
     }
   })
 
   it('switches cluster from the picker', async () => {
     mockApi()
+    inCluster()
     renderShell()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Select cluster' }))
@@ -112,12 +131,11 @@ describe('Shell', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/clusters/c2/-/overview'))
   })
 
-  it('reaches cluster management through the picker, not the navigation', async () => {
+  it('reaches cluster management from the header', async () => {
     mockApi()
     renderShell()
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Select cluster' }))
-    await userEvent.click(screen.getByRole('button', { name: /Manage clusters/ }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Clusters' }))
 
     await waitFor(() => expect(window.location.pathname).toBe('/manage'))
   })
@@ -126,8 +144,8 @@ describe('Shell', () => {
     mockApi()
     renderShell(VIEWER)
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Select cluster' }))
-    expect(screen.queryByRole('button', { name: /Manage clusters/ })).not.toBeInTheDocument()
+    await screen.findByRole('button', { name: 'Overview' })
+    expect(screen.queryByRole('button', { name: 'Clusters' })).not.toBeInTheDocument()
   })
 
   it('keeps the identity and its actions behind the account menu', async () => {

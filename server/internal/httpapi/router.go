@@ -14,6 +14,7 @@ import (
 	"github.com/erolbeyaz/kubby/internal/auth"
 	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/config"
+	"github.com/erolbeyaz/kubby/internal/health"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
@@ -67,8 +68,13 @@ func New(d Deps) *Server {
 		audit:    d.Audit,
 	}
 	resourceAPI := &resourceHandlers{
-		svc:      d.Cluster,
-		clusters: d.Store.Clusters(),
+		svc:            d.Cluster,
+		clusters:       d.Store.Clusters(),
+		audit:          d.Audit,
+		fleet:          &health.Fleet{},
+		sidecars:       d.Config.K8s.SidecarContainers,
+		eventWindow:    defaultEventWindow,
+		allowedOrigins: originHosts(d.Config.HTTP.PublicURL, d.Config.HTTP.AllowedOrigins),
 	}
 	userAPI := &userHandlers{
 		users:     d.Store.Users(),
@@ -146,6 +152,16 @@ func New(d Deps) *Server {
 				// so these are wildcard routes rather than path parameters.
 				cl.Get("/clusters/{id}/resources/*", resourceAPI.list)
 				cl.Get("/clusters/{id}/object/*", resourceAPI.get)
+				cl.Get("/clusters/{id}/health", resourceAPI.clusterHealth)
+				cl.Get("/clusters/{id}/secret/{namespace}/{name}/keys", resourceAPI.secretKeys)
+				// Disclosure is its own route so it is its own audit record; listing a
+				// secret's keys is not the same act as reading one of its values.
+				cl.Get("/clusters/{id}/secret/{namespace}/{name}/reveal", resourceAPI.revealSecret)
+				cl.Get("/fleet/health", resourceAPI.fleetHealth)
+				cl.Get("/clusters/{id}/pod/{namespace}/{name}/containers", resourceAPI.podContainers)
+				cl.Get("/clusters/{id}/pod/{namespace}/{name}/restarts", resourceAPI.podRestarts)
+				cl.Get("/clusters/{id}/pod/{namespace}/{name}/logs", resourceAPI.podLogs)
+				cl.Get("/clusters/{id}/describe/*", resourceAPI.describe)
 			})
 
 			authed.With(requirePermission(rbac.PermClusterManage)).Group(func(cl chi.Router) {

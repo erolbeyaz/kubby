@@ -14,6 +14,9 @@ import { statusColor, typeKeyForKind } from './statusColor'
 const ROW_HEIGHT = 30
 const NAME_WIDTH = 'minmax(14rem, 2fr)'
 
+/** The namespace picker and the search box are one control pair, so one width. */
+const FILTER_WIDTH = '14rem'
+
 export interface NavigationTarget {
   typeKey?: string | undefined
   namespace?: string | undefined
@@ -34,6 +37,7 @@ interface ResourceTableProps {
   selectedName?: string | null
   /** Clicking away from a row closes the detail panel. */
   onDismiss: () => void
+  onContextMenu: (row: ResourceRow, at: { x: number; y: number }) => void
 }
 
 export function ResourceTable({
@@ -49,6 +53,7 @@ export function ResourceTable({
   onNavigate,
   selectedName,
   onDismiss,
+  onContextMenu,
 }: ResourceTableProps) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState('')
@@ -94,20 +99,25 @@ export function ResourceTable({
         className="flex h-12 shrink-0 items-center gap-2 border-b px-3"
         style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}
       >
+        {/* The two read as a pair — narrow, then narrow again — so they are one size
+            and one height rather than a short box beside a tall one. */}
         {namespaceScoped && (
-          <NamespacePicker
-            namespaces={allNamespaces}
-            selected={namespaces}
-            onChange={onNamespacesChange}
-          />
+          <div style={{ width: FILTER_WIDTH }}>
+            <NamespacePicker
+              namespaces={allNamespaces}
+              selected={namespaces}
+              onChange={onNamespacesChange}
+            />
+          </div>
         )}
 
-        <div className="w-64">
+        <div style={{ width: FILTER_WIDTH }}>
           <TextInput
             placeholder={`Search ${kind}…`}
             aria-label={`Filter ${kind}`}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            style={{ height: 32, width: '100%' }}
           />
         </div>
 
@@ -193,9 +203,17 @@ export function ResourceTable({
             {(row) => (
               <div
                 key={`${row.namespace}/${row.name}`}
-                onClick={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpen(row)
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  onContextMenu(row, { x: event.clientX, y: event.clientY })
+                }}
                 onMouseEnter={() => onPrefetch(row)}
-                className="grid items-center gap-3 border-b px-4 transition-colors hover:bg-[var(--bg-hover)]"
+                className="grid cursor-pointer items-center gap-3 border-b px-4 transition-colors hover:bg-[var(--bg-hover)]"
                 style={{
                   gridTemplateColumns: grid,
                   height: ROW_HEIGHT,
@@ -205,9 +223,7 @@ export function ResourceTable({
                   boxShadow: row.name === selectedName ? 'inset 2px 0 0 0 var(--accent)' : undefined,
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() => onOpen(row)}
+                <span
                   className="flex min-w-0 items-center gap-2 text-left"
                   style={{ color: 'var(--text-primary)' }}
                 >
@@ -221,8 +237,8 @@ export function ResourceTable({
                       }}
                     />
                   )}
-                  <span className="truncate hover:underline">{row.name}</span>
-                </button>
+                  <span className="truncate">{row.name}</span>
+                </span>
 
                 {showNamespace && (
                   <LinkCell
@@ -360,8 +376,8 @@ function LinkCell({
       type="button"
       onClick={onClick}
       title={title ?? value}
-      className="truncate text-left hover:underline"
-      style={{ fontSize: 'var(--text-micro)', color: 'var(--status-info)' }}
+      className="truncate text-left text-[var(--status-info)] transition-colors hover:text-[var(--accent)] hover:underline"
+      style={{ fontSize: 'var(--text-micro)' }}
     >
       {value}
     </button>
@@ -389,8 +405,9 @@ function HeaderCell({
       role="columnheader"
       aria-sort={active ? (desc ? 'descending' : 'ascending') : 'none'}
       onClick={() => onSort(sortKey)}
-      className="truncate text-left hover:text-[var(--text-secondary)]"
-      style={{ color: active ? 'var(--text-secondary)' : 'inherit' }}
+      className={`truncate text-left transition-colors hover:text-[var(--text-primary)] ${
+        active ? 'text-[var(--text-secondary)]' : ''
+      }`}
     >
       {label}
       {active && <span aria-hidden="true">{desc ? ' ↓' : ' ↑'}</span>}

@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
+import { GlobalViews } from '@/app/GlobalViews'
 import { AccountMenu, type AccountAction } from '@/components/AccountMenu'
-import { ClusterPicker } from '@/components/ClusterPicker'
 import { EmptyState } from '@/components/EmptyState'
+import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
 import { StatusBar } from '@/components/StatusBar'
 import { AccountScreen } from '@/features/account/AccountScreen'
 import { ManageClustersScreen } from '@/features/clusters/ManageClustersScreen'
+import { FleetHealth } from '@/features/health/FleetHealth'
 import { ResourceExplorer } from '@/features/resources/ResourceExplorer'
 import { UsersScreen } from '@/features/users/UsersScreen'
 import { api, type Me } from '@/lib/api'
@@ -43,6 +45,16 @@ export function Shell({ me, onSignOut }: ShellProps) {
   const list = clusters.data?.clusters ?? []
   const current = list.find((c) => c.id === location.clusterId) ?? null
 
+  const openClusterOverview = (clusterId: string) =>
+    navigate({
+      section: 'clusters',
+      clusterId,
+      namespaces: [],
+      typeKey: 'overview',
+      objectName: null,
+      objectNamespace: '',
+    })
+
   const openAccount = (action: AccountAction) => {
     navigate({ section: 'settings', settingsView: 'account' })
     setAccountFocus(action)
@@ -51,26 +63,38 @@ export function Shell({ me, onSignOut }: ShellProps) {
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: 'var(--bg-base)' }}>
       <header
-        className="flex h-11 shrink-0 items-center gap-3 border-b px-3"
+        className="flex h-12 shrink-0 items-center gap-3 border-b px-3"
         style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-subtle)' }}
       >
+        {/* The mark goes to the current cluster's overview, which is where someone
+            clicking "home" in a cluster tool means to end up. */}
         <button
           type="button"
-          onClick={() => navigate({ section: 'clusters', clusterId: null, objectName: null })}
-          className="flex shrink-0 items-center gap-2"
+          onClick={() =>
+            navigate(
+              location.clusterId
+                ? { section: 'clusters', typeKey: 'overview', objectName: null, objectNamespace: '' }
+                : { section: 'clusters', clusterId: null, objectName: null, objectNamespace: '' },
+            )
+          }
+          className="flex shrink-0 items-center"
           aria-label="Kubby home"
         >
-          <Logo size={20} />
+          <Logo size={28} variant="wordmark" />
         </button>
 
-        <ClusterPicker
-          clusters={list}
-          current={current}
-          canManage={canManage}
-          onSelect={(clusterId) =>
-            navigate({ section: 'clusters', clusterId, namespaces: [], typeKey: 'overview', objectName: null })
+        <span className="h-5 w-px shrink-0" style={{ backgroundColor: 'var(--border-default)' }} />
+
+        <GlobalViews
+          active={location.section === 'clusters' ? (location.clusterId ? location.typeKey : 'overview') : ''}
+          hasCluster={current !== null}
+          onSelect={(view) =>
+            navigate(
+              current
+                ? { section: 'clusters', typeKey: view, objectName: null, objectNamespace: '' }
+                : { section: 'clusters', clusterId: null, objectName: null, objectNamespace: '' },
+            )
           }
-          onManage={() => navigate({ section: 'manage' })}
         />
 
         {location.section !== 'clusters' && (
@@ -82,7 +106,18 @@ export function Shell({ me, onSignOut }: ShellProps) {
           </span>
         )}
 
-        <span className="ml-auto">
+        <span className="ml-auto flex items-center gap-2">
+          {canManage && (
+            <button
+              type="button"
+              onClick={() => navigate({ section: 'manage' })}
+              className="nav-chip"
+              title="Add and manage clusters"
+            >
+              <Icon name="plus" />
+              Clusters
+            </button>
+          )}
           <AccountMenu me={me} onSelect={openAccount} onSignOut={onSignOut} />
         </span>
       </header>
@@ -105,9 +140,21 @@ export function Shell({ me, onSignOut }: ShellProps) {
         ) : current ? (
           <ResourceExplorer
             cluster={current}
+            clusters={list}
             location={location}
             onNavigate={navigate}
             canManage={canManage}
+            onSelectCluster={(clusterId) =>
+              navigate({
+                section: 'clusters',
+                clusterId,
+                namespaces: [],
+                typeKey: 'overview',
+                objectName: null,
+                objectNamespace: '',
+              })
+            }
+            onManageClusters={() => navigate({ section: 'manage' })}
           />
         ) : clusters.isLoading ? (
           <EmptyState title="Loading clusters…" description="" />
@@ -122,10 +169,9 @@ export function Shell({ me, onSignOut }: ShellProps) {
             {...(canManage ? { hint: 'Use the picker above → Manage clusters' } : {})}
           />
         ) : (
-          <EmptyState
-            title="Pick a cluster"
-            description="Choose one from the picker in the top-left corner."
-          />
+          // With no cluster chosen, the landing screen answers the question people
+          // actually arrive with: which of my clusters is broken (ADR-056).
+          <FleetHealth onOpen={openClusterOverview} />
         )}
       </div>
 

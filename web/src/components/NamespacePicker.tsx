@@ -71,16 +71,15 @@ export function NamespacePicker({ namespaces, selected, onChange }: NamespacePic
   }
 
   return (
-    <div ref={container} className="relative">
+    <div ref={container} className="relative w-full">
       <button
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label="Namespace"
         onClick={() => setOpen((value) => !value)}
-        className="flex h-8 items-center gap-2 border px-2.5"
+        className="flex h-8 w-full items-center gap-2 border px-2.5"
         style={{
-          minWidth: '10rem',
           borderRadius: 'var(--radius-sharp)',
           borderColor: open ? 'var(--accent)' : 'var(--border-default)',
           backgroundColor: 'var(--bg-base)',

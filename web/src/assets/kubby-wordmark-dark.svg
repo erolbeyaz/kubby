@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="352" viewBox="137 60 1103 352">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7FEFD7"/>
+      <stop offset="100%" stop-color="#78D9FF"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#g)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M286 82 L414 154 L414 306 L286 378 L158 306 L158 154 Z"/>
+    <path d="M158 154 L286 226 L414 154"/>
+    <path d="M286 226 L286 378"/>
+  </g>
+  <text x="470" y="350" font-family="DejaVu Sans, Arial, sans-serif" font-size="250" font-weight="700" letter-spacing="-6"><tspan fill="#F8FAFC">Kubb</tspan><tspan fill="#7FEFD7">y</tspan></text>
+</svg>

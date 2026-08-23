@@ -4,10 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/cluster"
+	"github.com/erolbeyaz/kubby/internal/health"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
@@ -19,6 +22,15 @@ const defaultListLimit = 1000
 type resourceHandlers struct {
 	svc      *cluster.Service
 	clusters *store.ClusterRepo
+	audit    *audit.Emitter
+	// fleet caches per-cluster sweeps so a fleet of twenty clusters does not mean twenty
+	// concurrent sweeps on every page load.
+	fleet       *health.Fleet
+	sidecars    []string
+	eventWindow time.Duration
+	// allowedOrigins gates the log WebSocket. The browser sends the session cookie with
+	// the upgrade, so accepting a cross-origin one would hand any page a reader's session.
+	allowedOrigins []string
 }
 
 // resolveCluster loads the cluster in the URL and enforces read access. Sharing this
