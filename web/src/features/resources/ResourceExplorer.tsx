@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type { Location } from '@/app/navigation'
@@ -15,8 +15,14 @@ import { DescribePane } from '@/features/logs/DescribePane'
 import { LogPane } from '@/features/logs/LogPane'
 import { ClusterPicker } from '@/components/ClusterPicker'
 import { ContextMenu, type MenuItem } from '@/components/ContextMenu'
-import { TAB_ICONS, closeTab, openTab, tabLabel, type DockTab } from '@/features/logs/dock'
+import { CreatePane } from '@/features/create/CreatePane'
+import { TAB_ICONS, closeTab, openCreateTab, openTab, tabLabel, type DockTab } from '@/features/logs/dock'
 
+import { WorkloadsOverview } from './WorkloadsOverview'
+import { ActionRunner, type PendingAction } from './ActionRunner'
+import { DrainDialog } from './DrainDialog'
+import { ScaleDialog } from './ScaleDialog'
+import { DeleteDialog, type DeleteTarget } from './DeleteDialog'
 import { actionsFor } from './actions'
 
 import { ResourceTable, type NavigationTarget } from './ResourceTable'
@@ -53,6 +59,68 @@ export function ResourceExplorer({
   // pod's log is a second tab, so the first is still there to compare against.
   const [dock, setDock] = useState<{ tabs: DockTab[]; activeId: string }>({ tabs: [], activeId: '' })
   const [menu, setMenu] = useState<{ row: ResourceRow; at: { x: number; y: number } } | null>(null)
+  // Selection belongs to the view, not the session: keeping it across a change of kind
+  // or namespace would let someone delete what they are no longer looking at.
+  const [selection, setSelection] = useState<Set<string>>(new Set())
+  const [deleting, setDeleting] = useState<DeleteTarget | null>(null)
+  const [pending, setPending] = useState<PendingAction | null>(null)
+  const [scaling, setScaling] = useState<ResourceRow | null>(null)
+  const [draining, setDraining] = useState<string | null>(null)
+  // A write sets off a short window of close attention, so what the cluster does next is
+  // watched rather than discovered fifteen seconds later.
+  const [live, setLive] = useState(false)
+  const settle = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (settle.current) clearTimeout(settle.current)
+  }, [])
+
+  const watchForChanges = () => {
+    setLive(true)
+    if (settle.current) clearTimeout(settle.current)
+    settle.current = setTimeout(() => setLive(false), SETTLE_WINDOW)
+  }
+
+  // The table owns the rows, so it hands back the ones it selected rather than this
+  // reaching into its query cache with a key it would have to keep in step.
+  const runAction = (id: string, row: ResourceRow) => {
+    switch (id) {
+      case 'details':
+        openObject(row)
+        return
+      case 'delete':
+        openDelete([row])
+        return
+      case 'scale':
+        setScaling(row)
+        return
+      case 'drain':
+        setDraining(row.name)
+        return
+      case 'edit':
+        setDock((current) =>
+          openTab(current.tabs, {
+            kind: 'edit',
+            clusterId: cluster.id,
+            typeKey: location.typeKey,
+            namespace: row.namespace ?? '',
+            name: row.name,
+          }),
+        )
+        return
+      case 'logs':
+      case 'describe':
+        openDock(id, row)
+        return
+      default:
+        setPending({ id, clusterId: cluster.id, typeKey: location.typeKey, kind, row })
+    }
+  }
+
+  const openDelete = (rows: ResourceRow[]) => {
+    if (rows.length === 0) return
+    setDeleting({ clusterId: cluster.id, typeKey: location.typeKey, kind, rows })
+  }
 
   const openDock = (kind: 'logs' | 'describe', row: ResourceRow) =>
     setDock((current) =>
@@ -115,7 +183,15 @@ export function ResourceExplorer({
 
   const namespacesError = namespaces.error instanceof ApiError ? namespaces.error : null
 
+  // Clicking a row while the panel is open closes it, whichever row it is. Asked for
+  // directly: the panel is dismissed by clicking anywhere in the list, not only by
+  // finding an empty patch of it.
   const openObject = (row: ResourceRow) => {
+    if (location.objectName) {
+      onNavigate({ objectName: null, objectNamespace: '' })
+      return
+    }
+
     setClickedRow(row)
     onNavigate({ objectName: row.name, objectNamespace: row.namespace ?? '' })
   }
@@ -172,7 +248,12 @@ export function ResourceExplorer({
             <ResourceTree
               clusterId={cluster.id}
               selectedType={location.typeKey}
-              onSelectType={(typeKey) => onNavigate({ typeKey, objectName: null, objectNamespace: '' })}
+              canManageSettings={canManage}
+              onSelectType={(typeKey) =>
+                typeKey === 'kubby-settings'
+                  ? onNavigate({ section: 'settings', settingsView: 'kubby' })
+                  : onNavigate({ typeKey, objectName: null, objectNamespace: '' })
+              }
             />
           </div>
         </div>
@@ -188,6 +269,14 @@ export function ResourceExplorer({
         ) : location.typeKey === 'overview' ? (
           <div className="min-w-0 flex-1">
             <ClusterOverview cluster={cluster} onNavigate={navigateTo} onOpenCluster={onSelectCluster} />
+          </div>
+        ) : location.typeKey === 'workloads' ? (
+          <div className="min-w-0 flex-1">
+            <WorkloadsOverview
+              clusterId={cluster.id}
+              namespaces={location.namespaces}
+              onOpenType={(typeKey) => onNavigate({ typeKey, objectName: null, objectNamespace: '' })}
+            />
           </div>
         ) : location.typeKey === 'health' ? (
           <div className="min-w-0 flex-1">
@@ -228,6 +317,12 @@ export function ResourceExplorer({
                 selectedName={location.objectName}
                 onDismiss={() => location.objectName && onNavigate({ objectName: null, objectNamespace: '' })}
                 onContextMenu={(row, at) => setMenu({ row, at })}
+                selection={selection}
+                onSelectionChange={setSelection}
+                canWrite={canManage}
+                onCreate={() => setDock((current) => openCreateTab(current, cluster.id, location.typeKey))}
+                onDeleteSelected={openDelete}
+                live={live}
               />
 
               {selectedRow && (
@@ -249,7 +344,7 @@ export function ResourceExplorer({
                       row={selectedRow}
                       onClose={() => onNavigate({ objectName: null, objectNamespace: '' })}
                       onNavigate={navigateTo}
-                      onOpenDock={(kind) => openDock(kind, selectedRow)}
+                      onAction={(id) => runAction(id, selectedRow)}
                     />
                   </ResizablePanel>
                 </div>
@@ -269,17 +364,37 @@ export function ResourceExplorer({
                   id: tab.id,
                   label: tabLabel(tab),
                   icon: TAB_ICONS[tab.kind],
-                  render: () =>
-                    tab.kind === 'logs' ? (
-                      <LogPane clusterId={tab.clusterId} namespace={tab.namespace} pod={tab.name} />
-                    ) : (
+                  render: () => {
+                    if (tab.kind === 'logs') {
+                      return <LogPane clusterId={tab.clusterId} namespace={tab.namespace} pod={tab.name} />
+                    }
+                    if (tab.kind === 'create' || tab.kind === 'edit') {
+                      return (
+                        <CreatePane
+                          clusterId={tab.clusterId}
+                          namespaces={location.namespaces}
+                          onChanged={watchForChanges}
+                          {...(tab.kind === 'edit'
+                            ? {
+                                editing: {
+                                  typeKey: tab.typeKey,
+                                  namespace: tab.namespace,
+                                  name: tab.name,
+                                },
+                              }
+                            : {})}
+                        />
+                      )
+                    }
+                    return (
                       <DescribePane
                         clusterId={tab.clusterId}
                         typeKey={tab.typeKey}
                         namespace={tab.namespace}
                         name={tab.name}
                       />
-                    ),
+                    )
+                  },
                 }))}
               />
             )}
@@ -289,19 +404,63 @@ export function ResourceExplorer({
         )}
       </main>
 
+      {deleting && (
+        <DeleteDialog
+          target={deleting}
+          onChanged={watchForChanges}
+          onClose={() => {
+            setDeleting(null)
+            setSelection(new Set())
+          }}
+        />
+      )}
+
+      {scaling && (
+        <ScaleDialog
+          clusterId={cluster.id}
+          typeKey={location.typeKey}
+          kind={kind}
+          row={scaling}
+          onChanged={watchForChanges}
+          onClose={() => setScaling(null)}
+        />
+      )}
+
+      {draining && (
+        <DrainDialog
+          clusterId={cluster.id}
+          node={draining}
+          onChanged={watchForChanges}
+          onClose={() => setDraining(null)}
+        />
+      )}
+
+      {pending && (
+        <ActionRunner
+          action={pending}
+          onChanged={watchForChanges}
+          onClose={() => setPending(null)}
+        />
+      )}
+
       {menu && (
         <ContextMenu
           at={menu.at}
           onClose={() => setMenu(null)}
-          items={menuItemsFor(kind, {
-            onDetails: () => openObject(menu.row),
-            onDock: (dockKind) => openDock(dockKind, menu.row),
-          })}
+          items={menuItemsFor(kind, (id) => runAction(id, menu.row))}
         />
       )}
     </div>
   )
 }
+
+/**
+ * How long the list watches closely after a write.
+ *
+ * Long enough for a controller to react and for its replacement to be scheduled; short
+ * enough that a forgotten tab is not polling every second all afternoon.
+ */
+const SETTLE_WINDOW = 20_000
 
 /**
  * The right-click menu, built from the one action registry (ADR-053).
@@ -310,19 +469,13 @@ export function ResourceExplorer({
  * what an object can do is part of understanding it, and a menu that grows silently
  * between releases teaches people to stop looking.
  */
-function menuItemsFor(
-  kind: string,
-  handlers: { onDetails: () => void; onDock: (kind: 'logs' | 'describe') => void },
-): MenuItem[] {
+function menuItemsFor(kind: string, run: (id: string) => void): MenuItem[] {
   return actionsFor(kind).map((action) => ({
     id: action.id,
     label: action.label,
     icon: action.icon,
     ...(action.destructive ? { destructive: true } : {}),
     ...(action.comingIn ? { disabled: true, note: action.comingIn } : {}),
-    onSelect: () => {
-      if (action.id === 'details') handlers.onDetails()
-      else if (action.dockTab) handlers.onDock(action.dockTab)
-    },
+    onSelect: () => run(action.id),
   }))
 }

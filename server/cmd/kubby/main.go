@@ -126,6 +126,7 @@ func run() error {
 		Auth:    authService,
 		Cluster: clusterService,
 		Audit:   audit.New(db.Audit(), logger),
+		Keyring: keyring,
 		WebFS:   webFS,
 	})
 	defer server.Close()

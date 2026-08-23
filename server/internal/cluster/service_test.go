@@ -3,7 +3,7 @@ package cluster_test
 import (
 	"bytes"
 	"context"
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,21 +13,16 @@ import (
 	"github.com/erolbeyaz/kubby/internal/crypto"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
+	"github.com/erolbeyaz/kubby/internal/store/storetest"
 )
 
 func serviceHarness(t *testing.T) (*cluster.Service, *store.DB, uuid.UUID) {
 	t.Helper()
 
-	dsn := os.Getenv("KUBBY_TEST_DB_DSN")
-	if dsn == "" {
-		t.Skip("KUBBY_TEST_DB_DSN is not set; skipping cluster service tests")
-	}
-
-	db, err := store.OpenDSN(context.Background(), dsn, 5)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(db.Close)
+	// A schema of its own. These tests seal credentials with a key of their own, and
+	// writing them into a database a running Kubby is reading turns its real cluster
+	// into one that reports "ciphertext is malformed".
+	db := storetest.Isolated(t, filepath.Join("..", "..", "migrations"))
 
 	keyring, err := crypto.NewKeyring(1, bytes.Repeat([]byte{9}, 32))
 	if err != nil {

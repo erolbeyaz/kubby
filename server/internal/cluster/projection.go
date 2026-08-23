@@ -3,9 +3,13 @@ package cluster
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+
+	"github.com/erolbeyaz/kubby/internal/k8s"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -56,7 +60,9 @@ type Column struct {
 // projector turns an object into a row plus the columns its kind uses.
 type projector struct {
 	columns []Column
-	project func(obj *unstructured.Unstructured) (map[string]string, string)
+	// hideName drops the name column for kinds whose name says nothing.
+	hideName bool
+	project  func(obj *unstructured.Unstructured) (map[string]string, string)
 }
 
 // ColumnsFor reports the columns a kind renders.
@@ -65,6 +71,13 @@ func ColumnsFor(kind string) []Column {
 		return p.columns
 	}
 	return genericProjector.columns
+}
+
+// HidesName reports whether a kind's own name is worth a column. An Event's name is a
+// generated suffix; what it is about is the object it names inside itself.
+func HidesName(kind string) bool {
+	p, ok := projectors[kind]
+	return ok && p.hideName
 }
 
 // Project turns an object into a list row.
@@ -100,7 +113,6 @@ var projectors = map[string]projector{
 			{Key: "restarts", Label: "Restarts", Mono: true},
 			{Key: "controlledBy", Label: "Controlled By", Link: LinkOwner},
 			{Key: "node", Label: "Node", Mono: true, Link: LinkNode},
-			{Key: "qos", Label: "QoS"},
 			{Key: "status", Label: "Status", Status: true},
 			{Key: "age", Label: "Age", Mono: true},
 		},
@@ -117,15 +129,12 @@ var projectors = map[string]projector{
 			desired := nestedInt(obj, "spec", "replicas")
 			ready := nestedInt(obj, "status", "readyReplicas")
 
-			severity := ""
-			if ready < desired {
-				severity = SeverityWarning
-			}
-			return map[string]string{
+			fields := map[string]string{
 				"ready":     fmt.Sprintf("%d/%d", ready, desired),
 				"uptodate":  fmt.Sprint(nestedInt(obj, "status", "updatedReplicas")),
 				"available": fmt.Sprint(nestedInt(obj, "status", "availableReplicas")),
-			}, severity
+			}
+			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
 	"StatefulSet": {
@@ -137,11 +146,8 @@ var projectors = map[string]projector{
 			desired := nestedInt(obj, "spec", "replicas")
 			ready := nestedInt(obj, "status", "readyReplicas")
 
-			severity := ""
-			if ready < desired {
-				severity = SeverityWarning
-			}
-			return map[string]string{"ready": fmt.Sprintf("%d/%d", ready, desired)}, severity
+			fields := map[string]string{"ready": fmt.Sprintf("%d/%d", ready, desired)}
+			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
 	"DaemonSet": {
@@ -155,15 +161,12 @@ var projectors = map[string]projector{
 			desired := nestedInt(obj, "status", "desiredNumberScheduled")
 			ready := nestedInt(obj, "status", "numberReady")
 
-			severity := ""
-			if ready < desired {
-				severity = SeverityWarning
-			}
-			return map[string]string{
+			fields := map[string]string{
 				"desired":   fmt.Sprint(desired),
 				"ready":     fmt.Sprint(ready),
 				"available": fmt.Sprint(nestedInt(obj, "status", "numberAvailable")),
-			}, severity
+			}
+			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
 	"ReplicaSet": {
@@ -290,12 +293,28 @@ var projectors = map[string]projector{
 	},
 	"Node": {
 		columns: []Column{
-			{Key: "status", Label: "Status", Status: true},
+			{Key: "taints", Label: "Taints", Mono: true},
 			{Key: "roles", Label: "Roles"},
 			{Key: "version", Label: "Version", Mono: true},
 			{Key: "age", Label: "Age", Mono: true},
+			{Key: "status", Label: "Conditions", Status: true},
 		},
 		project: projectNode,
+	},
+	"Event": {
+		// An event's own name is a generated suffix nobody reads; what it is about is
+		// the involved object, and what it says is the message.
+		hideName: true,
+		columns: []Column{
+			{Key: "type", Label: "Type", Status: true},
+			{Key: "message", Label: "Message"},
+			{Key: "involvedObject", Label: "Involved Object", Link: LinkOwner},
+			{Key: "source", Label: "Source", Mono: true},
+			{Key: "count", Label: "Count", Mono: true},
+			{Key: "age", Label: "Age", Mono: true},
+			{Key: "lastSeen", Label: "Last Seen", Mono: true},
+		},
+		project: projectEvent,
 	},
 	"Namespace": {
 		columns: []Column{
@@ -362,28 +381,60 @@ func projectPod(obj *unstructured.Unstructured) (map[string]string, string) {
 	}
 
 	containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "containers")
-	phase := nestedString(obj, "status", "phase")
+	// Not the phase: a crash-looping pod's phase is "Running", which is true of the pod
+	// and useless to the reader (see k8s.PodStatus).
+	phase := k8s.PodStatus(obj)
+
+	// The same reading the health panel does (internal/k8s), so a row and the panel can
+	// never disagree about the same pod. "Pending" is the question; this is the answer.
+	trouble := k8s.PodTrouble(obj)
 
 	severity := ""
-	switch {
-	case phase == "Failed":
-		severity = SeverityError
-	case phase == "Pending", restarts > 0, ready < len(containers):
+	if trouble != nil {
+		severity = trouble.Severity
+	} else if restarts > 0 {
 		severity = SeverityWarning
 	}
 
 	owner, ownerKind := ownerOf(obj)
 
-	return map[string]string{
+	fields := map[string]string{
 		"containers":       fmt.Sprintf("%d/%d", ready, len(containers)),
 		"ready":            fmt.Sprintf("%d/%d", ready, len(containers)),
 		"status":           phase,
 		"restarts":         fmt.Sprint(restarts),
 		"node":             nestedString(obj, "spec", "nodeName"),
-		"qos":              nestedString(obj, "status", "qosClass"),
 		"controlledBy":     owner,
 		"controlledByKind": ownerKind,
-	}, severity
+	}
+	if trouble != nil {
+		fields["reason"] = trouble.Reason
+		fields["trouble"] = trouble.Detail
+		if trouble.Container != "" {
+			fields["troubleContainer"] = trouble.Container
+		}
+	}
+	return fields, severity
+}
+
+// withTrouble folds a reading of what is wrong into a row's fields.
+//
+// The mark in the list and the sentence behind it come from one place, so a workload's
+// own page says what its pods' page says rather than leaving the reader to go and look.
+func withTrouble(fields map[string]string, trouble *k8s.Trouble) (map[string]string, string) {
+	if trouble == nil {
+		return fields, ""
+	}
+
+	fields["reason"] = trouble.Reason
+	fields["trouble"] = trouble.Detail
+	if trouble.Container != "" {
+		fields["troubleContainer"] = trouble.Container
+	}
+	if trouble.Severity == k8s.SeverityWarning {
+		return fields, SeverityWarning
+	}
+	return fields, SeverityError
 }
 
 // ownerOf reports the workload a resource is controlled by, which is the first question
@@ -420,6 +471,8 @@ func projectNode(obj *unstructured.Unstructured) (map[string]string, string) {
 		}
 	}
 
+	taints, _, _ := unstructured.NestedSlice(obj.Object, "spec", "taints")
+
 	if unschedulable, _, _ := unstructured.NestedBool(obj.Object, "spec", "unschedulable"); unschedulable {
 		status += ",SchedulingDisabled"
 		if severity == "" {
@@ -442,7 +495,39 @@ func projectNode(obj *unstructured.Unstructured) (map[string]string, string) {
 		"status":  status,
 		"roles":   strings.Join(roles, ","),
 		"version": nestedString(obj, "status", "nodeInfo", "kubeletVersion"),
+		// The count rather than the taints themselves: a node with six taints has a
+		// reason nobody reads in a table cell, and the detail panel has room for it.
+		"taints": strconv.Itoa(len(taints)),
+		// Disk is capacity, not usage: metrics-server reports CPU and memory only, and
+		// an empty column is worse than an honest one.
+		"disk": humanBytes(nestedString(obj, "status", "capacity", "ephemeral-storage")),
 	}, severity
+}
+
+// humanBytes renders a Kubernetes quantity as something readable, or leaves it alone
+// when it is not a plain byte count.
+func humanBytes(quantity string) string {
+	if quantity == "" {
+		return ""
+	}
+
+	parsed, err := resource.ParseQuantity(quantity)
+	if err != nil {
+		return quantity
+	}
+
+	bytes := parsed.Value()
+	const unit = 1024
+	if bytes < unit {
+		return strconv.FormatInt(bytes, 10) + "B"
+	}
+
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit && exp < 4; n /= unit {
+		div *= unit
+		exp++
+	}
+	return strconv.FormatFloat(float64(bytes)/float64(div), 'f', 1, 64) + string("KMGTP"[exp]) + "i"
 }
 
 func nestedString(obj *unstructured.Unstructured, path ...string) string {
@@ -479,4 +564,82 @@ func humanAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dy", int(d.Hours())/(24*365))
 	}
+}
+
+// projectEvent reads what an event is about, not what it is called.
+func projectEvent(obj *unstructured.Unstructured) (map[string]string, string) {
+	eventType := nestedString(obj, "type")
+
+	severity := ""
+	if eventType == "Warning" {
+		severity = SeverityWarning
+	}
+
+	kind := nestedString(obj, "involvedObject", "kind")
+	name := nestedString(obj, "involvedObject", "name")
+	involved := name
+	if kind != "" && name != "" {
+		involved = kind + ": " + name
+	}
+
+	count, _, _ := unstructured.NestedInt64(obj.Object, "count")
+	if count == 0 {
+		count = 1
+	}
+
+	last := eventTime(obj)
+	lastSeen := ""
+	if !last.IsZero() {
+		lastSeen = last.UTC().Format(time.RFC3339)
+	}
+
+	return map[string]string{
+		"type":               eventType,
+		"message":            nestedString(obj, "message"),
+		"involvedObject":     involved,
+		"involvedObjectKind": kind,
+		"involvedObjectName": name,
+		"source":             eventSource(obj),
+		"count":              strconv.FormatInt(count, 10),
+		"lastSeen":           lastSeen,
+		"reason":             nestedString(obj, "reason"),
+	}, severity
+}
+
+// eventSource is the component that reported it, with the node when there is one, which
+// is how "kubelet on which machine" gets answered without opening the event.
+func eventSource(obj *unstructured.Unstructured) string {
+	component := nestedString(obj, "source", "component")
+	if component == "" {
+		component = nestedString(obj, "reportingComponent")
+	}
+	host := nestedString(obj, "source", "host")
+	if host == "" {
+		host = nestedString(obj, "reportingInstance")
+	}
+
+	switch {
+	case component != "" && host != "":
+		return component + " " + host
+	case component != "":
+		return component
+	case host != "":
+		return host
+	}
+	return "<unknown>"
+}
+
+// eventTime reads whichever of the three time fields the API server filled in. Events
+// written through events.k8s.io leave lastTimestamp empty.
+func eventTime(obj *unstructured.Unstructured) time.Time {
+	for _, field := range []string{"lastTimestamp", "eventTime", "firstTimestamp"} {
+		value := nestedString(obj, field)
+		if value == "" {
+			continue
+		}
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }

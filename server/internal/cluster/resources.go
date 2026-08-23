@@ -62,6 +62,8 @@ type ListResult struct {
 	FromCache bool   `json:"fromCache"`
 	Warming   bool   `json:"warming,omitempty"`
 	Continue  string `json:"continue,omitempty"`
+	// HideName drops the name column for kinds whose own name says nothing.
+	HideName bool `json:"hideName,omitempty"`
 }
 
 // List returns projected rows for a resource type.
@@ -257,7 +259,15 @@ func finishList(result *ListResult, req ListRequest) {
 		result.Rows = filtered
 	}
 
-	sortRows(result.Rows, req.SortBy, req.Descending)
+	sortBy, descending := req.SortBy, req.Descending
+	if sortBy == "" && req.Type.DefaultSort != "" {
+		// An event list read oldest-first is a list nobody wants: what just happened is
+		// the reason the screen was opened.
+		sortBy, descending = req.Type.DefaultSort, req.Type.DefaultSortDescending
+	}
+
+	sortRows(result.Rows, sortBy, descending)
+	result.HideName = HidesName(req.Type.Kind)
 	result.Total = len(result.Rows)
 }
 
@@ -282,6 +292,8 @@ func sortRows(rows []Row, sortBy string, descending bool) {
 				return rows[i].Namespace < rows[j].Namespace
 			}
 			return rows[i].Name < rows[j].Name
+		case "lastSeen":
+			return rows[i].Fields["lastSeen"] < rows[j].Fields["lastSeen"]
 		case "age":
 			// Newest first means the most recently created, so compare timestamps
 			// rather than the rendered age string.

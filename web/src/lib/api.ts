@@ -254,6 +254,7 @@ export const resourceListSchema = z.object({
   rows: z.array(rowSchema),
   total: z.number(),
   fromCache: z.boolean(),
+  hideName: z.boolean().optional(),
   warming: z.boolean().optional(),
   continue: z.string().optional(),
 })
@@ -265,6 +266,123 @@ const gaugeSchema = z.object({
   allocatable: z.number(),
   capacity: z.number(),
   unit: z.string(),
+})
+
+export const workloadOverviewSchema = z.object({
+  counts: z.array(
+    z.object({
+      kind: z.string(),
+      typeKey: z.string(),
+      total: z.number(),
+      ready: z.number(),
+    }),
+  ),
+  events: resourceListSchema.nullable().optional(),
+})
+
+export type WorkloadOverview = z.infer<typeof workloadOverviewSchema>
+
+// ---------------------------------------------------------------- deployment settings
+
+export const kubbySettingsSchema = z.object({
+  nodeShell: z.object({
+    image: z.string(),
+    namespace: z.string(),
+    pullSecret: z.string().optional(),
+    enabled: z.boolean(),
+  }),
+  metrics: z.object({
+    enabled: z.boolean(),
+    url: z.string(),
+    username: z.string().optional(),
+    // Whether a credential is stored is configuration; the credential is not.
+    hasPassword: z.boolean(),
+    insecureSkipVerify: z.boolean(),
+    organization: z.string().optional(),
+  }),
+  auditSink: z.object({
+    enabled: z.boolean(),
+    kind: z.string(),
+    url: z.string(),
+    index: z.string().optional(),
+    username: z.string().optional(),
+    hasToken: z.boolean(),
+    insecureSkipVerify: z.boolean(),
+  }),
+})
+
+export type KubbySettings = z.infer<typeof kubbySettingsSchema>
+
+// ---------------------------------------------------------------- writing
+
+export const diffLineSchema = z.object({
+  kind: z.enum(['context', 'added', 'removed']),
+  text: z.string(),
+})
+
+export type DiffLine = z.infer<typeof diffLineSchema>
+
+export const gitOpsOwnerSchema = z.object({
+  controller: z.string(),
+  instance: z.string().optional(),
+  selfHeal: z.boolean(),
+})
+
+export type GitOpsOwner = z.infer<typeof gitOpsOwnerSchema>
+
+export const applyResultSchema = z.object({
+  dryRun: z.boolean(),
+  results: z.array(
+    z.object({
+      kind: z.string(),
+      name: z.string(),
+      namespace: z.string().optional(),
+      diff: z.array(diffLineSchema).optional(),
+      unchanged: z.boolean().optional(),
+      owner: gitOpsOwnerSchema.optional(),
+      error: z.string().optional(),
+    }),
+  ),
+})
+
+export type ApplyResult = z.infer<typeof applyResultSchema>
+
+export const revisionSchema = z.object({
+  number: z.number(),
+  created: z.string(),
+  images: z.array(z.string()),
+  cause: z.string().optional(),
+  current: z.boolean(),
+})
+
+export type Revision = z.infer<typeof revisionSchema>
+
+const rolloutSchema = z.object({ revisions: z.array(revisionSchema) })
+
+const drainPodSchema = z.object({
+  namespace: z.string(),
+  name: z.string(),
+  owner: z.string().optional(),
+  reason: z.string().optional(),
+})
+
+export const drainPlanSchema = z.object({
+  node: z.string(),
+  evict: z.array(drainPodSchema).nullable(),
+  skip: z.array(drainPodSchema).nullable(),
+})
+
+export type DrainPlan = z.infer<typeof drainPlanSchema>
+
+const drainResultSchema = z.object({
+  results: z.array(
+    z.object({
+      namespace: z.string(),
+      name: z.string(),
+      evicted: z.boolean(),
+      reason: z.string().optional(),
+    }),
+  ),
 })
 
 // ---------------------------------------------------------------- problem detection
@@ -524,6 +642,26 @@ export const api = {
     )
   },
 
+  settings: (signal?: AbortSignal) => request('/api/v1/settings', kubbySettingsSchema, { signal }),
+
+  saveNodeShell: (body: KubbySettings['nodeShell']) =>
+    request('/api/v1/settings/node-shell', kubbySettingsSchema, { method: 'PUT', body }),
+
+  saveMetrics: (body: KubbySettings['metrics'] & { password?: string; clearPassword?: boolean }) =>
+    request('/api/v1/settings/metrics', kubbySettingsSchema, { method: 'PUT', body }),
+
+  saveAuditSink: (body: KubbySettings['auditSink'] & { token?: string; clearToken?: boolean }) =>
+    request('/api/v1/settings/audit-sink', kubbySettingsSchema, { method: 'PUT', body }),
+
+  workloadsOverview: (clusterId: string, namespaces: string[] = [], signal?: AbortSignal) => {
+    const suffix = namespaces.length > 0 ? `?namespace=${encodeURIComponent(namespaces.join(','))}` : ''
+    return request(
+      `/api/v1/clusters/${clusterId}/workloads-overview${suffix}`,
+      workloadOverviewSchema,
+      { signal },
+    )
+  },
+
   health: (clusterId: string, namespaces: string[] = [], signal?: AbortSignal) => {
     const suffix = namespaces.length > 0 ? `?namespace=${encodeURIComponent(namespaces.join(','))}` : ''
     return request(`/api/v1/clusters/${clusterId}/health${suffix}`, healthReportSchema, { signal })
@@ -572,6 +710,74 @@ export const api = {
       revealSchema,
       { signal },
     ),
+
+  apply: (clusterId: string, body: { manifest: string; dryRun: boolean }) =>
+    request(`/api/v1/clusters/${clusterId}/apply`, applyResultSchema, { method: 'POST', body }),
+
+  deleteObject: (
+    clusterId: string,
+    typeKey: string,
+    params: { name: string; namespace?: string; propagation?: string },
+  ) => {
+    const query = new URLSearchParams({ name: params.name })
+    if (params.namespace) query.set('namespace', params.namespace)
+    if (params.propagation) query.set('propagation', params.propagation)
+
+    return request(`/api/v1/clusters/${clusterId}/object/${typeKey}?${query}`, z.object({ deleted: z.boolean() }), {
+      method: 'DELETE',
+    })
+  },
+
+  scale: (clusterId: string, body: { typeKey: string; namespace: string; name: string; replicas: number }) =>
+    request(`/api/v1/clusters/${clusterId}/scale`, z.object({ replicas: z.number() }), { method: 'POST', body }),
+
+  restart: (clusterId: string, body: { typeKey: string; namespace: string; name: string }) =>
+    request(`/api/v1/clusters/${clusterId}/restart`, z.object({ restarted: z.boolean() }), {
+      method: 'POST',
+      body,
+    }),
+
+  evict: (clusterId: string, body: { namespace: string; name: string }) =>
+    request(`/api/v1/clusters/${clusterId}/evict`, z.object({ evicted: z.boolean() }), { method: 'POST', body }),
+
+  suspendCronJob: (clusterId: string, body: { namespace: string; name: string; suspended: boolean }) =>
+    request(`/api/v1/clusters/${clusterId}/cronjob/suspend`, z.object({ suspended: z.boolean() }), {
+      method: 'POST',
+      body,
+    }),
+
+  triggerCronJob: (clusterId: string, body: { namespace: string; name: string }) =>
+    request(`/api/v1/clusters/${clusterId}/cronjob/trigger`, z.object({ job: z.string() }), {
+      method: 'POST',
+      body,
+    }),
+
+  cordonNode: (clusterId: string, body: { name: string; unschedulable: boolean }) =>
+    request(`/api/v1/clusters/${clusterId}/node/cordon`, z.object({ unschedulable: z.boolean() }), {
+      method: 'POST',
+      body,
+    }),
+
+  rolloutHistory: (clusterId: string, namespace: string, name: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/rollout/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`,
+      rolloutSchema,
+      { signal },
+    ),
+
+  drainPlan: (clusterId: string, node: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${clusterId}/drain-plan/${encodeURIComponent(node)}`, drainPlanSchema, {
+      signal,
+    }),
+
+  drainNode: (clusterId: string, body: { name: string }) =>
+    request(`/api/v1/clusters/${clusterId}/node/drain`, drainResultSchema, { method: 'POST', body }),
+
+  rollback: (clusterId: string, body: { namespace: string; name: string; revision: number }) =>
+    request(`/api/v1/clusters/${clusterId}/rollback`, z.object({ revision: z.number() }), {
+      method: 'POST',
+      body,
+    }),
 
   audit: (params: { limit?: number } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams()

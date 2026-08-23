@@ -8,7 +8,11 @@ interface DonutProps {
   title: string
   segments: Segment[]
   /** The full circle: what the value is measured against. */
+  /** What the ring is drawn against: what can actually be scheduled. */
   total: number
+  allocatable?: number
+  /** The machine's whole size, which the scheduler never gets all of. */
+  capacity?: number
   format: (value: number) => string
 }
 
@@ -23,7 +27,7 @@ const RADIUS = (SIZE - STROKE) / 2
  * usage, requests and limits overlap by nature: a pod's usage is inside its request,
  * not additional to it, and stacking would imply a total that does not exist.
  */
-export function Donut({ title, segments, total, format }: DonutProps) {
+export function Donut({ title, segments, total, allocatable, capacity, format }: DonutProps) {
   const safeTotal = total > 0 ? total : Math.max(...segments.map((s) => s.value), 1)
 
   return (
@@ -101,13 +105,31 @@ export function Donut({ title, segments, total, format }: DonutProps) {
             </dd>
           </div>
         ))}
+        {/* Allocatable is what the scheduler may actually hand out: capacity minus what
+            the kubelet and the system reserve. Reading a cluster against capacity alone
+            makes it look emptier than it can ever be. */}
+        {allocatable !== undefined && (
+          <div className="flex items-center gap-1.5 py-0.5">
+            <span
+              className="h-2 w-2 shrink-0"
+              style={{ backgroundColor: 'var(--border-strong)', borderRadius: '1px' }}
+            />
+            <dt className="flex-1 truncate" style={{ color: 'var(--text-muted)' }}>
+              Allocatable Capacity
+            </dt>
+            <dd className="font-mono" style={{ color: 'var(--text-secondary)' }}>
+              {format(allocatable)}
+            </dd>
+          </div>
+        )}
+
         <div className="flex items-center gap-1.5 py-0.5">
           <span className="h-2 w-2 shrink-0" style={{ backgroundColor: 'var(--bg-raised)', borderRadius: '1px' }} />
           <dt className="flex-1 truncate" style={{ color: 'var(--text-muted)' }}>
             Capacity
           </dt>
           <dd className="font-mono" style={{ color: 'var(--text-secondary)' }}>
-            {format(total)}
+            {format(capacity ?? total)}
           </dd>
         </div>
       </dl>

@@ -77,6 +77,15 @@ interface YamlViewerProps {
   value: string
   /** Height is driven by the container; the editor fills whatever it is given. */
   ariaLabel?: string
+  /** Supplying this makes the editor writable. */
+  onChange?: (value: string) => void
+  /**
+   * Opens the editor's own find widget when this number changes.
+   *
+   * A counter rather than a boolean, because asking twice is a real request: the reader
+   * pressed the button again.
+   */
+  findSignal?: number
 }
 
 /**
@@ -86,7 +95,7 @@ interface YamlViewerProps {
  * that nesting a matter of counting spaces. The same editor is what phase 7 will use
  * for editing and diffing, so the reading and writing views stay consistent.
  */
-export function YamlViewer({ value, ariaLabel }: YamlViewerProps) {
+export function YamlViewer({ value, ariaLabel, onChange, findSignal = 0 }: YamlViewerProps) {
   const container = useRef<HTMLDivElement>(null)
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
 
@@ -101,8 +110,8 @@ export function YamlViewer({ value, ariaLabel }: YamlViewerProps) {
       value,
       language: 'yaml',
       theme: dark ? THEME_DARK : THEME_LIGHT,
-      readOnly: true,
-      domReadOnly: true,
+      readOnly: onChange === undefined,
+      domReadOnly: onChange === undefined,
       automaticLayout: true,
       minimap: { enabled: false },
       lineNumbers: 'on',
@@ -126,7 +135,12 @@ export function YamlViewer({ value, ariaLabel }: YamlViewerProps) {
     editor.current = instance
     if (ariaLabel) instance.updateOptions({ ariaLabel })
 
+    const subscription = onChange
+      ? instance.onDidChangeModelContent(() => onChange(instance.getValue()))
+      : null
+
     return () => {
+      subscription?.dispose()
       instance.getModel()?.dispose()
       instance.dispose()
       editor.current = null
@@ -141,6 +155,15 @@ export function YamlViewer({ value, ariaLabel }: YamlViewerProps) {
       instance.setValue(value)
     }
   }, [value])
+
+  // Monaco ships a find widget; reaching for it is better than building a second one
+  // that behaves almost the same.
+  useEffect(() => {
+    if (findSignal === 0) return
+    const instance = editor.current
+    instance?.focus()
+    void instance?.getAction('actions.find')?.run()
+  }, [findSignal])
 
   return <div ref={container} className="h-full w-full" data-testid="yaml-viewer" />
 }

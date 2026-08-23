@@ -18,18 +18,23 @@ type containersBody struct {
 	} `json:"containers"`
 }
 
-// firstPod returns a pod name from the seeded namespace.
+// firstPod returns a running pod from the seeded namespace.
+//
+// Running, not merely first: the namespace deliberately holds pods that cannot start, and
+// a log stream from a container that never ran reports an error rather than opening.
 func firstPod(t *testing.T, h *harness, id string) string {
 	t.Helper()
 
 	resp := h.do(http.MethodGet, "/api/v1/clusters/"+id+"/resources/pods?namespace=payments", nil)
 	defer func() { _ = resp.Body.Close() }()
 
-	body := decode[listBody](t, resp)
-	if len(body.Rows) == 0 {
-		t.Skip("no pods in the payments namespace")
+	for _, row := range decode[listBody](t, resp).Rows {
+		if row.Fields["status"] == "Running" {
+			return row.Name
+		}
 	}
-	return body.Rows[0].Name
+	t.Skip("no running pod in the payments namespace")
+	return ""
 }
 
 // ADR-030: the application container comes first, so a log view opening on the default

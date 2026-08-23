@@ -31,6 +31,8 @@ type resourceHandlers struct {
 	// allowedOrigins gates the log WebSocket. The browser sends the session cookie with
 	// the upgrade, so accepting a cross-origin one would hand any page a reader's session.
 	allowedOrigins []string
+	// readOnly is the deployment-wide kill switch: when it is on, nothing writes.
+	readOnly bool
 }
 
 // resolveCluster loads the cluster in the URL and enforces read access. Sharing this

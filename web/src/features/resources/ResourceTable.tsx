@@ -7,11 +7,13 @@ import { TextInput } from '@/components/Field'
 import { NamespacePicker } from '@/components/NamespacePicker'
 import { VirtualRows } from '@/components/VirtualRows'
 import { ApiError, api, type Column, type ResourceRow } from '@/lib/api'
-import { formatAbsolute } from '@/lib/time'
+import { formatAbsolute, formatAge, isLiveAge } from '@/lib/time'
+import { useTicker } from '@/lib/use-ticker'
 
 import { statusColor, typeKeyForKind } from './statusColor'
 
-const ROW_HEIGHT = 30
+// Dense, but a list that has to be squinted at is not dense, it is cramped.
+const ROW_HEIGHT = 36
 const NAME_WIDTH = 'minmax(14rem, 2fr)'
 
 /** The namespace picker and the search box are one control pair, so one width. */
@@ -38,6 +40,21 @@ interface ResourceTableProps {
   /** Clicking away from a row closes the detail panel. */
   onDismiss: () => void
   onContextMenu: (row: ResourceRow, at: { x: number; y: number }) => void
+  selection: Set<string>
+  onSelectionChange: (next: Set<string>) => void
+  /** Whether this reader may delete; the buttons are absent rather than inert if not. */
+  canWrite: boolean
+  onCreate: () => void
+  onDeleteSelected: (rows: ResourceRow[]) => void
+  /**
+   * Refresh every second rather than every fifteen.
+   *
+   * A controller replaces a deleted pod within a second. On the ordinary poll the reader
+   * sees the row vanish and, fifteen seconds later, a similarly named one appear — which
+   * reads as the delete having failed and then undone itself. Watching it happen is the
+   * difference between a confusing non-event and an explanation.
+   */
+  live: boolean
 }
 
 export function ResourceTable({
@@ -54,6 +71,12 @@ export function ResourceTable({
   selectedName,
   onDismiss,
   onContextMenu,
+  selection,
+  onSelectionChange,
+  canWrite,
+  onCreate,
+  onDeleteSelected,
+  live,
 }: ResourceTableProps) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState('')
@@ -65,7 +88,7 @@ export function ResourceTable({
     queryKey: ['resources', clusterId, typeKey, namespaceParam, search, sort, desc],
     queryFn: ({ signal }) =>
       api.resources(clusterId, typeKey, { namespace: namespaceParam, search, sort, desc }, signal),
-    refetchInterval: 15_000,
+    refetchInterval: live ? 1_000 : 15_000,
     placeholderData: (previous) => previous,
   })
 
@@ -77,10 +100,38 @@ export function ResourceTable({
   // namespace is picked makes the table change shape under the user and loses the one
   // field that says where a row came from once the filter is widened again.
   const showNamespace = namespaceScoped && rows.some((row) => row.namespace)
+  // An Event's name is a generated suffix; the column would be a wall of hashes.
+  const showName = !list.data?.hideName
 
-  const grid = [NAME_WIDTH, showNamespace ? '10rem' : '', ...columns.map(widthFor)]
+  const grid = [
+    '1.5rem',
+    showName ? NAME_WIDTH : '',
+    '1.5rem',
+    showNamespace ? '10rem' : '',
+    ...columns.map(widthFor),
+    '1.75rem',
+  ]
     .filter(Boolean)
     .join(' ')
+
+  // Ticking only matters while something on screen is recent enough to show seconds.
+  const hasRecent = rows.some((row) => isLiveAge(row.createdAt))
+  const now = useTicker(hasRecent)
+
+  const keyOf = (row: ResourceRow) => `${row.namespace ?? ''}/${row.name}`
+  const allSelected = rows.length > 0 && rows.every((row) => selection.has(keyOf(row)))
+  const someSelected = rows.some((row) => selection.has(keyOf(row)))
+
+  const toggleRow = (row: ResourceRow) => {
+    const next = new Set(selection)
+    const key = keyOf(row)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    onSelectionChange(next)
+  }
+
+  const toggleAll = () =>
+    onSelectionChange(allSelected ? new Set() : new Set(rows.map(keyOf)))
 
   const toggleSort = (key: string) => {
     if (sort === key) {
@@ -128,6 +179,15 @@ export function ResourceTable({
           {list.data?.total ?? 0} items
         </span>
 
+        {live && (
+          <span
+            title="Watching for the cluster to settle"
+            style={{ fontSize: 'var(--text-micro)', color: 'var(--accent)' }}
+          >
+            live
+          </span>
+        )}
+
         {list.data?.fromCache && (
           <span
             title="Served from a live cache"
@@ -161,7 +221,7 @@ export function ResourceTable({
 
       {rows.length > 0 && (
         <div
-          className="min-h-0 flex-1"
+          className="relative min-h-0 flex-1"
           // Clicking the empty area below the rows dismisses the detail panel; a row's
           // own handler stops the event before it reaches here.
           onClick={onDismiss}
@@ -179,11 +239,26 @@ export function ResourceTable({
                   height: ROW_HEIGHT,
                   backgroundColor: 'var(--bg-surface)',
                   borderColor: 'var(--border-default)',
-                  fontSize: 'var(--text-micro)',
+                  fontSize: 'var(--text-secondary-size)',
                   color: 'var(--text-muted)',
                 }}
               >
-                <HeaderCell label="Name" sortKey="name" sort={sort} desc={desc} onSort={toggleSort} />
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  checked={allSelected}
+                  ref={(element) => {
+                    // Some-but-not-all is its own state: an unticked box would say
+                    // nothing is selected while rows below are.
+                    if (element) element.indeterminate = someSelected && !allSelected
+                  }}
+                  onChange={toggleAll}
+                  onClick={(event) => event.stopPropagation()}
+                />
+                {showName && (
+                  <HeaderCell label="Name" sortKey="name" sort={sort} desc={desc} onSort={toggleSort} />
+                )}
+                <span aria-hidden="true" />
                 {showNamespace && (
                   <HeaderCell label="Namespace" sortKey="namespace" sort={sort} desc={desc} onSort={toggleSort} />
                 )}
@@ -197,6 +272,7 @@ export function ResourceTable({
                     onSort={toggleSort}
                   />
                 ))}
+                <span aria-hidden="true" />
               </div>
             }
           >
@@ -223,6 +299,15 @@ export function ResourceTable({
                   boxShadow: row.name === selectedName ? 'inset 2px 0 0 0 var(--accent)' : undefined,
                 }}
               >
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${row.name}`}
+                  checked={selection.has(keyOf(row))}
+                  onChange={() => toggleRow(row)}
+                  onClick={(event) => event.stopPropagation()}
+                />
+
+                {showName && (
                 <span
                   className="flex min-w-0 items-center gap-2 text-left"
                   style={{ color: 'var(--text-primary)' }}
@@ -239,6 +324,9 @@ export function ResourceTable({
                   )}
                   <span className="truncate">{row.name}</span>
                 </span>
+                )}
+
+                <WarningMark row={row} kind={kind} />
 
                 {showNamespace && (
                   <LinkCell
@@ -248,11 +336,45 @@ export function ResourceTable({
                 )}
 
                 {columns.map((column) => (
-                  <Cell key={column.key} column={column} row={row} onNavigate={onNavigate} />
+                  <Cell key={column.key} column={column} row={row} now={now} onNavigate={onNavigate} />
                 ))}
+
+                <button
+                  type="button"
+                  aria-label={`Actions for ${row.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    const box = event.currentTarget.getBoundingClientRect()
+                    onContextMenu(row, { x: box.left, y: box.bottom })
+                  }}
+                  className="tool-chip"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                    <circle cx="8" cy="3.2" r="1.3" />
+                    <circle cx="8" cy="8" r="1.3" />
+                    <circle cx="8" cy="12.8" r="1.3" />
+                  </svg>
+                </button>
               </div>
             )}
           </VirtualRows>
+
+          {canWrite && (
+            <div className="pointer-events-none absolute bottom-4 right-4 flex items-center gap-2">
+              <FloatingButton
+                label={
+                  selection.size === 0
+                    ? 'Select rows to delete'
+                    : `Delete ${selection.size} selected`
+                }
+                disabled={selection.size === 0}
+                destructive
+                onClick={() => onDeleteSelected(rows.filter((row) => selection.has(keyOf(row))))}
+                path="M4 8h8"
+              />
+              <FloatingButton label="Create resource" onClick={onCreate} path="M8 4v8M4 8h8" />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -262,23 +384,40 @@ export function ResourceTable({
 function Cell({
   column,
   row,
+  now,
   onNavigate,
 }: {
+  now: Date
   column: Column
   row: ResourceRow
   onNavigate: (target: NavigationTarget) => void
 }) {
-  const value = column.key === 'age' ? row.age : (row.fields[column.key] ?? '')
+  // Age is recomputed here rather than taken from the server's string, so a row less
+  // than ten minutes old counts up on screen instead of waiting for the next poll.
+  const value =
+    column.key === 'age' ? formatAge(row.createdAt, now) : (row.fields[column.key] ?? '')
 
   if (!value) {
     return (
-      <span style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>—</span>
+      <span style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-muted)' }}>—</span>
+    )
+  }
+
+  if (column.key === 'message' && row.fields['type'] === 'Warning') {
+    return (
+      <span
+        className="truncate"
+        style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--status-error)' }}
+        title={value}
+      >
+        {value}
+      </span>
     )
   }
 
   if (column.status) {
     return (
-      <span className="truncate" style={{ fontSize: 'var(--text-micro)', color: statusColor(value) }}>
+      <span className="truncate" style={{ fontSize: 'var(--text-secondary-size)', color: statusColor(value) }}>
         {value}
       </span>
     )
@@ -314,7 +453,7 @@ function Cell({
     <span
       className="truncate"
       style={{
-        fontSize: 'var(--text-micro)',
+        fontSize: 'var(--text-secondary-size)',
         fontFamily: column.mono ? 'var(--font-mono)' : undefined,
         color: 'var(--text-secondary)',
       }}
@@ -332,7 +471,7 @@ function ContainerPips({ value }: { value: string }) {
   const total = Number(totalText)
 
   if (!Number.isFinite(ready) || !Number.isFinite(total)) {
-    return <span style={{ fontSize: 'var(--text-micro)' }}>{value}</span>
+    return <span style={{ fontSize: 'var(--text-secondary-size)' }}>{value}</span>
   }
 
   return (
@@ -365,7 +504,7 @@ function LinkCell({
 }) {
   if (!onClick) {
     return (
-      <span className="truncate" style={{ fontSize: 'var(--text-micro)', color: 'var(--text-secondary)' }} title={title}>
+      <span className="truncate" style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-secondary)' }} title={title}>
         {value}
       </span>
     )
@@ -377,7 +516,7 @@ function LinkCell({
       onClick={onClick}
       title={title ?? value}
       className="truncate text-left text-[var(--status-info)] transition-colors hover:text-[var(--accent)] hover:underline"
-      style={{ fontSize: 'var(--text-micro)' }}
+      style={{ fontSize: 'var(--text-secondary-size)' }}
     >
       {value}
     </button>
@@ -433,4 +572,121 @@ function widthFor(column: Column): string {
     default:
       return 'minmax(6rem, 1fr)'
   }
+}
+
+/**
+ * The create and delete buttons that float over the list.
+ *
+ * They sit over the rows rather than in the header because they act on what is selected
+ * below them, and because a list is scrolled far more often than it is acted on.
+ */
+function FloatingButton({
+  label,
+  path,
+  onClick,
+  disabled = false,
+  destructive = false,
+}: {
+  label: string
+  path: string
+  onClick: () => void
+  disabled?: boolean
+  destructive?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        onClick()
+      }}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className="pointer-events-auto flex h-10 w-10 items-center justify-center shadow-lg transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      style={{
+        borderRadius: '9999px',
+        backgroundColor: destructive ? 'var(--status-error)' : 'var(--accent)',
+        color: 'var(--text-inverse)',
+      }}
+    >
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+        <path d={path} />
+      </svg>
+    </button>
+  )
+}
+
+/**
+ * The triangle that says a row is not doing what it was asked to.
+ *
+ * Ahead of the name rather than in the status column, because it is read by scanning
+ * down the left edge — the status word is what you look at once the triangle has told
+ * you where to look.
+ */
+function WarningMark({ row, kind }: { row: ResourceRow; kind: string }) {
+  const trouble = troubleWith(row, kind)
+  if (!trouble) return <span aria-hidden="true" />
+
+  return (
+    <span
+      role="img"
+      aria-label={trouble}
+      title={trouble}
+      className="flex h-5 w-5 shrink-0 items-center justify-center"
+      // Filled rather than outlined, and the mark cut out of it: an outline at this size
+      // is a shape you have to look for, and this one has to be found by scanning.
+      style={{ color: row.severity === 'error' ? 'var(--status-error)' : 'var(--status-warn)' }}
+    >
+      <svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true">
+        <path
+          d="M7.13 1.86a1 1 0 0 1 1.74 0l6.0 10.4a1 1 0 0 1-.87 1.5H1.99a1 1 0 0 1-.87-1.5z"
+          fill="currentColor"
+        />
+        <path
+          d="M8 5.4v3.5M8 11.05h.01"
+          stroke="var(--bg-base)"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
+    </span>
+  )
+}
+
+/** States a kind considers finished or fine, and so worth no mark. */
+const SETTLED = new Set(['Running', 'Completed', 'Succeeded', 'Active', 'Bound', 'Ready', 'Available'])
+
+/**
+ * What is wrong with a row, in words, or nothing.
+ *
+ * The server reads the object and says why — the image could not be pulled, no node had
+ * room, the kernel took the memory back — and this shows that sentence. "Pending" and
+ * "Failed" are the question; a tooltip that repeats them makes the reader open the object
+ * to learn what the row already knew.
+ */
+function troubleWith(row: ResourceRow, kind: string): string {
+  const detail = row.fields['trouble'] ?? ''
+  const reason = row.fields['reason'] ?? ''
+  const container = row.fields['troubleContainer'] ?? ''
+
+  if (detail) {
+    const head = container ? `${reason} · ${container}` : reason
+    return head ? `${head}\n${detail}` : detail
+  }
+
+  // Kinds the server has no dedicated reading for still say whether they are settled.
+  const status = row.fields['status'] ?? ''
+  if (status && !SETTLED.has(status)) {
+    return reason && reason !== status ? `${kind} is ${status}: ${reason}` : `${kind} is ${status}`
+  }
+
+  const restarts = Number(row.fields['restarts'] ?? '0')
+  if (Number.isFinite(restarts) && restarts > 0) {
+    return `Restarted ${restarts} ${restarts === 1 ? 'time' : 'times'}`
+  }
+
+  if (row.severity) return `This ${kind} needs attention`
+  return ''
 }

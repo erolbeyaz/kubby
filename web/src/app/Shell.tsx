@@ -11,7 +11,7 @@ import { AccountScreen } from '@/features/account/AccountScreen'
 import { ManageClustersScreen } from '@/features/clusters/ManageClustersScreen'
 import { FleetHealth } from '@/features/health/FleetHealth'
 import { ResourceExplorer } from '@/features/resources/ResourceExplorer'
-import { UsersScreen } from '@/features/users/UsersScreen'
+import { SettingsScreen } from '@/features/settings/SettingsScreen'
 import { api, type Me } from '@/lib/api'
 
 import { useNavigation } from './navigation'
@@ -180,6 +180,13 @@ export function Shell({ me, onSignOut }: ShellProps) {
   )
 }
 
+/**
+ * The two settings areas, which answer different questions.
+ *
+ * Account is about the person signed in. Kubby Settings is about the installation —
+ * who may sign in at all, and what this deployment is allowed to reach — so it is
+ * admin-only and lives on its own.
+ */
 function SettingsArea({
   me,
   view,
@@ -187,11 +194,14 @@ function SettingsArea({
   onViewChange,
 }: {
   me: Me
-  view: 'account' | 'users'
+  view: 'account' | 'users' | 'kubby'
   focus: AccountAction | null
-  onViewChange: (view: 'account' | 'users') => void
+  onViewChange: (view: 'account' | 'kubby') => void
 }) {
-  const canManageUsers = me.permissions.includes('user.manage')
+  const canManageSettings = me.permissions.includes('settings.write')
+  // "users" was its own view before the deployment settings existed; it is a section of
+  // them now, and an old link should land somewhere sensible rather than nowhere.
+  const active = view === 'users' ? 'kubby' : view
 
   return (
     <div className="flex h-full">
@@ -200,15 +210,19 @@ function SettingsArea({
         style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}
         aria-label="Settings"
       >
-        <PanelLink label="Account" active={view === 'account'} onClick={() => onViewChange('account')} />
-        {canManageUsers && (
-          <PanelLink label="Users" active={view === 'users'} onClick={() => onViewChange('users')} />
+        <PanelLink label="Account" active={active === 'account'} onClick={() => onViewChange('account')} />
+        {canManageSettings && (
+          <PanelLink
+            label="Kubby Settings"
+            active={active === 'kubby'}
+            onClick={() => onViewChange('kubby')}
+          />
         )}
       </nav>
 
       <div className="min-w-0 flex-1">
-        {view === 'account' && <AccountScreen me={me} focus={focus} />}
-        {view === 'users' && canManageUsers && <UsersScreen me={me} />}
+        {active === 'account' && <AccountScreen me={me} focus={focus} />}
+        {active === 'kubby' && canManageSettings && <SettingsScreen me={me} />}
       </div>
     </div>
   )

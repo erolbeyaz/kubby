@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import type { InputHTMLAttributes, ReactNode, Ref, SelectHTMLAttributes } from 'react'
 import { useId } from 'react'
 
 const controlStyle = {
@@ -39,12 +39,16 @@ export function Field({ label, hint, error, children }: FieldProps) {
   )
 }
 
-type TextInputProps = InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }
+type TextInputProps = InputHTMLAttributes<HTMLInputElement> & {
+  invalid?: boolean
+  ref?: Ref<HTMLInputElement>
+}
 
-export function TextInput({ invalid, style, ...props }: TextInputProps) {
+export function TextInput({ invalid, style, ref, ...props }: TextInputProps) {
   return (
     <input
       {...props}
+      ref={ref}
       aria-invalid={invalid ?? undefined}
       className="h-9 border px-2.5 text-[13px] outline-none transition-colors focus:border-[var(--accent)]"
       style={{

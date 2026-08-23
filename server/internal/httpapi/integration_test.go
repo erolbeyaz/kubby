@@ -105,6 +105,9 @@ func newHarnessWithMFA(t *testing.T, requireMFAForAdmin bool) *harness {
 			RequireMFAForAdmin: requireMFAForAdmin,
 			Argon2:             auth.DefaultArgon2Params(16), Issuer: "kubby-test",
 		}),
+		// Settings seal their credentials with the same key as cluster credentials, so
+		// the harness has to hand the keyring over or every save panics.
+		Keyring: keyring,
 		Cluster: cluster.NewService(db, keyring, cluster.Settings{
 			DefaultQPS: 20, DefaultBurst: 40, Timeout: 10 * time.Second, AllowLoopback: true,
 		}),

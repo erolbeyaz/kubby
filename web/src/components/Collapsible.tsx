@@ -43,8 +43,8 @@ export function Collapsible({ title, defaultOpen = true, storageKey, children }:
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-7 w-full items-center gap-1.5 px-2 text-left text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
-        style={{ fontSize: 'var(--text-micro)' }}
+        className="flex h-8 w-full items-center gap-1.5 px-2 text-left text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
+        style={{ fontSize: '13px' }}
       >
         <svg
           width="10"

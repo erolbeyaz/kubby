@@ -76,7 +76,7 @@ rotate-key: ## Rewrap stored secrets under a new key (see docs/ARCHITECTURE.md)
 ## ---------------------------------------------------------------- develop
 
 .PHONY: dev
-dev: check-tools db-up reset-embedded ## Run Postgres, the API (hot reload) and the Vite dev server
+dev: check-tools one-dev db-up reset-embedded ## Run Postgres, the API (hot reload) and the Vite dev server
 	@echo ""
 	@echo "  Kubby UI   http://localhost:5173   <- open this one"
 	@echo "  Kubby API  http://localhost:8080   (API only in dev; it serves no UI)"
@@ -87,6 +87,24 @@ dev: check-tools db-up reset-embedded ## Run Postgres, the API (hot reload) and 
 	( cd $(SERVER_DIR) && $(GOBIN)/air ) & \
 	( cd $(WEB_DIR) && npm run dev ) & \
 	wait
+
+.PHONY: one-dev
+one-dev: ## Refuse to start a second dev stack over a running one
+	@# Two stacks race for :8080 and :5173, and both write the same binary while the
+	@# other is executing it. The symptoms are wild — a server that answers with an old
+	@# build, or one that fails where the same code works from a shell — and none of
+	@# them point at the cause. Better to refuse than to debug that twice.
+	@if pgrep -f '$(GOBIN)/air' >/dev/null 2>&1; then \
+		echo "A dev stack is already running."; \
+		echo "Stop it (Ctrl-C in its terminal, or 'make dev-stop') before starting another."; \
+		exit 1; \
+	fi
+
+.PHONY: dev-stop
+dev-stop: ## Stop a dev stack started in another terminal
+	@pkill -f '$(GOBIN)/air' 2>/dev/null || true
+	@pkill -f 'vite.*$(WEB_DIR)' 2>/dev/null || true
+	@echo "Stopped."
 
 .PHONY: reset-embedded
 reset-embedded: ## Drop the embedded frontend so :8080 cannot serve a stale build

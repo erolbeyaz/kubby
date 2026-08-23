@@ -14,8 +14,10 @@ import (
 	"github.com/erolbeyaz/kubby/internal/auth"
 	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/config"
+	"github.com/erolbeyaz/kubby/internal/crypto"
 	"github.com/erolbeyaz/kubby/internal/health"
 	"github.com/erolbeyaz/kubby/internal/rbac"
+	"github.com/erolbeyaz/kubby/internal/settings"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
 
@@ -28,6 +30,9 @@ type Deps struct {
 	Auth    *auth.Service
 	Cluster *cluster.Service
 	Audit   *audit.Emitter
+	// Keyring seals the credentials settings carry, with the same key as cluster
+	// credentials so there is one key to rotate rather than two.
+	Keyring *crypto.Keyring
 	WebFS   fs.FS
 }
 
@@ -75,6 +80,11 @@ func New(d Deps) *Server {
 		sidecars:       d.Config.K8s.SidecarContainers,
 		eventWindow:    defaultEventWindow,
 		allowedOrigins: originHosts(d.Config.HTTP.PublicURL, d.Config.HTTP.AllowedOrigins),
+		readOnly:       d.Config.HTTP.ReadOnly,
+	}
+	settingsAPI := &settingsHandlers{
+		svc:   settings.New(d.Store.Settings(), d.Keyring),
+		audit: d.Audit,
 	}
 	userAPI := &userHandlers{
 		users:     d.Store.Users(),
@@ -146,6 +156,7 @@ func New(d Deps) *Server {
 				cl.Post("/clusters/{id}/test", clusterAPI.test)
 
 				cl.Get("/clusters/{id}/overview", resourceAPI.overview)
+				cl.Get("/clusters/{id}/workloads-overview", resourceAPI.workloadsOverview)
 				cl.Get("/clusters/{id}/namespaces", resourceAPI.listNamespaces)
 				cl.Get("/clusters/{id}/resource-types", resourceAPI.listTypes)
 				// The type key carries a slash for grouped kinds ("apps/deployments"),
@@ -162,6 +173,25 @@ func New(d Deps) *Server {
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/restarts", resourceAPI.podRestarts)
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/logs", resourceAPI.podLogs)
 				cl.Get("/clusters/{id}/describe/*", resourceAPI.describe)
+				cl.Get("/clusters/{id}/rollout/{namespace}/{name}", resourceAPI.rolloutHistory)
+				cl.Get("/clusters/{id}/drain-plan/{name}", resourceAPI.planDrain)
+			})
+
+			// Writing to a cluster. Every route here runs the same pre-flight chain
+			// (ADR-068): global kill switch, role, the cluster's read-only lock, then
+			// the cluster's own answer via SelfSubjectAccessReview.
+			authed.With(requirePermission(rbac.PermClusterWrite)).Group(func(cl chi.Router) {
+				cl.Post("/clusters/{id}/apply", resourceAPI.applyObject)
+				cl.Post("/clusters/{id}/apply/*", resourceAPI.applyObject)
+				cl.Delete("/clusters/{id}/object/*", resourceAPI.deleteObject)
+				cl.Post("/clusters/{id}/scale", resourceAPI.scale)
+				cl.Post("/clusters/{id}/restart", resourceAPI.restart)
+				cl.Post("/clusters/{id}/evict", resourceAPI.evict)
+				cl.Post("/clusters/{id}/cronjob/suspend", resourceAPI.suspendCronJob)
+				cl.Post("/clusters/{id}/cronjob/trigger", resourceAPI.triggerCronJob)
+				cl.Post("/clusters/{id}/node/cordon", resourceAPI.cordonNode)
+				cl.Post("/clusters/{id}/node/drain", resourceAPI.drainNode)
+				cl.Post("/clusters/{id}/rollback", resourceAPI.rollback)
 			})
 
 			authed.With(requirePermission(rbac.PermClusterManage)).Group(func(cl chi.Router) {
@@ -180,6 +210,16 @@ func New(d Deps) *Server {
 				admin.Patch("/users/{id}", userAPI.update)
 			})
 			authed.With(requirePermission(rbac.PermAuditRead)).Get("/audit", userAPI.listAudit)
+
+			// Deployment-wide settings. Only an admin holds PermSettingsWrite, and the
+			// read is behind the same gate: knowing where the audit trail is shipped is
+			// itself worth restricting.
+			authed.With(requirePermission(rbac.PermSettingsWrite)).Group(func(st chi.Router) {
+				st.Get("/settings", settingsAPI.read)
+				st.Put("/settings/node-shell", settingsAPI.saveNodeShell)
+				st.Put("/settings/metrics", settingsAPI.saveMetrics)
+				st.Put("/settings/audit-sink", settingsAPI.saveAuditSink)
+			})
 		})
 	})
 

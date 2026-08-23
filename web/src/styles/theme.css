@@ -254,6 +254,21 @@
     color: var(--accent);
   }
 
+  /* The button that commits. It is filled rather than outlined so it does not read as
+     one more toggle in a row of them. */
+  .tool-button--accent:not(:disabled) {
+    background-color: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-inverse);
+  }
+
+  .tool-button--accent:hover:not(:disabled),
+  .tool-button--accent:focus-visible:not(:disabled) {
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+    color: var(--text-inverse);
+  }
+
   /* The small controls that sit inside the search field. */
   .tool-chip {
     display: flex;
@@ -379,5 +394,47 @@
   .nav-chip:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  /* The scale slider. Browsers style range inputs their own way and none of the ways
+     match a dark interface, so the track and the thumb are drawn here. */
+  .scale-slider {
+    height: 1.25rem;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .scale-slider::-webkit-slider-runnable-track {
+    height: 2px;
+    border-radius: 1px;
+    background: var(--border-strong);
+  }
+
+  .scale-slider::-moz-range-track {
+    height: 2px;
+    border-radius: 1px;
+    background: var(--border-strong);
+  }
+
+  .scale-slider::-webkit-slider-thumb {
+    appearance: none;
+    margin-top: -5px;
+    height: 12px;
+    width: 12px;
+    border-radius: 9999px;
+    background: var(--accent);
+  }
+
+  .scale-slider::-moz-range-thumb {
+    height: 12px;
+    width: 12px;
+    border: none;
+    border-radius: 9999px;
+    background: var(--accent);
+  }
+
+  .scale-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px var(--accent-muted);
   }
 }

@@ -184,7 +184,12 @@ export function BottomDock({ tabs, activeId, onSelect, onCloseTab, onClose, stor
         </button>
       </div>
 
-      <div className="min-h-0 flex-1">{active?.render()}</div>
+      {/* Keyed by tab, so switching tabs mounts a different pane rather than handing a
+          new object to the one already there. Without this an editor keeps the first
+          manifest it loaded and every later tab shows it. */}
+      <div key={active?.id} className="min-h-0 flex-1">
+        {active?.render()}
+      </div>
     </section>
   )
 }

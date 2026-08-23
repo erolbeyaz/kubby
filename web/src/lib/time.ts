@@ -23,6 +23,17 @@ export function formatAbsolute(iso: string): string {
   return absoluteFormatter.format(date)
 }
 
+/** Below this many minutes an age is shown to the second, and ticks. */
+export const LIVE_MINUTES = 10
+
+/** Whether an age is recent enough to be worth re-rendering every second. */
+export function isLiveAge(from: string, now: Date = new Date()): boolean {
+  const start = new Date(from)
+  if (Number.isNaN(start.getTime())) return false
+
+  return now.getTime() - start.getTime() < LIVE_MINUTES * 60_000
+}
+
 /** Renders a duration the way kubectl renders its AGE column. */
 export function formatAge(from: string | Date, now: Date = new Date()): string {
   const start = from instanceof Date ? from : new Date(from)
@@ -33,6 +44,12 @@ export function formatAge(from: string | Date, now: Date = new Date()): string {
 
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) {
+    // Seconds are dropped past ten minutes. Below that they are the difference between
+    // "this just happened" and "this happened a while ago", which is the whole reason
+    // to look at an age column during an incident; above it they are noise that changes
+    // every second and says nothing.
+    if (minutes >= LIVE_MINUTES) return `${minutes}m`
+
     const rest = seconds % 60
     return rest > 0 ? `${minutes}m${rest}s` : `${minutes}m`
   }

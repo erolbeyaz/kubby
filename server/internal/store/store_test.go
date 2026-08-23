@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	"github.com/erolbeyaz/kubby/internal/config"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
+	"github.com/erolbeyaz/kubby/internal/store/storetest"
 )
 
 // Integration tests need a real PostgreSQL: the repositories are mostly SQL, and an
@@ -24,17 +25,9 @@ import (
 func testDB(t *testing.T) *store.DB {
 	t.Helper()
 
-	dsn := os.Getenv("KUBBY_TEST_DB_DSN")
-	if dsn == "" {
-		t.Skip("KUBBY_TEST_DB_DSN is not set; skipping database integration tests")
-	}
-
-	db, err := store.OpenDSN(context.Background(), dsn, 5)
-	if err != nil {
-		t.Fatalf("connect to test database: %v", err)
-	}
-	t.Cleanup(db.Close)
-	return db
+	// A schema of its own: the DSN in development names the database a running Kubby is
+	// using, and a test that writes into it rewrites real rows.
+	return storetest.Isolated(t, filepath.Join("..", "..", "migrations"))
 }
 
 // uniqueEmail keeps parallel runs and repeated runs from colliding.

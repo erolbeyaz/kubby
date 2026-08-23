@@ -84,6 +84,22 @@ func (h *resourceHandlers) fleetHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"clusters": h.fleet.Cards(r.Context(), targets)})
 }
 
+// workloadsOverview counts what is running and shows what has been happening to it.
+func (h *resourceHandlers) workloadsOverview(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.resolveCluster(w, r)
+	if !ok {
+		return
+	}
+
+	overview, err := h.svc.WorkloadsOverview(r.Context(), c,
+		namespacesFrom(r.URL.Query().Get("namespace")), impersonationFor(r, c))
+	if err != nil {
+		writeResourceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
 // ---------------------------------------------------------------- secrets
 
 // secretKeys lists a secret's keys and sizes. Values are never included here; disclosure

@@ -21,7 +21,7 @@ export interface Location {
    * object still belongs to exactly one — and a reload has only the URL to go on.
    */
   objectNamespace: string
-  settingsView: 'account' | 'users'
+  settingsView: 'account' | 'users' | 'kubby'
 }
 
 const DEFAULT_TYPE = 'overview'
@@ -57,7 +57,7 @@ export function parseLocation(pathname: string, search: string): Location {
     return {
       ...EMPTY_LOCATION,
       section: 'settings',
-      settingsView: parts[1] === 'users' ? 'users' : 'account',
+      settingsView: parts[1] === 'users' ? 'users' : parts[1] === 'kubby' ? 'kubby' : 'account',
     }
   }
   if (section === 'manage') {

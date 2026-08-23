@@ -7,8 +7,8 @@ import { ContextMenu, type MenuItem } from './ContextMenu'
 const items: MenuItem[] = [
   { id: 'details', label: 'Show details', onSelect: vi.fn() },
   { id: 'logs', label: 'Logs', onSelect: vi.fn() },
-  { id: 'edit', label: 'Edit', disabled: true, note: 'phase 6' },
-  { id: 'delete', label: 'Delete', destructive: true, disabled: true, note: 'phase 6' },
+  { id: 'shell', label: 'Shell', disabled: true, note: 'phase 8' },
+  { id: 'delete', label: 'Delete', destructive: true, onSelect: vi.fn() },
 ]
 
 function open(onClose = vi.fn()) {
@@ -30,9 +30,21 @@ describe('ContextMenu', () => {
   it('shows unavailable actions with the phase that brings them', () => {
     open()
 
-    const edit = screen.getByRole('menuitem', { name: /Edit/ })
-    expect(edit).toBeDisabled()
-    expect(edit).toHaveTextContent('phase 6')
+    const shell = screen.getByRole('menuitem', { name: /Shell/ })
+    expect(shell).toBeDisabled()
+    expect(shell).toHaveTextContent('phase 8')
+  })
+
+  // Delete works, so it must not be sitting behind a "coming later" label.
+  it('offers delete as a real action', async () => {
+    const onClose = open()
+
+    const remove = screen.getByRole('menuitem', { name: /Delete/ })
+    expect(remove).toBeEnabled()
+
+    await userEvent.click(remove)
+    expect(items[3]?.onSelect).toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalled()
   })
 
   it('runs the chosen action and closes', async () => {

@@ -3,6 +3,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { ResourceRow } from '@/lib/api'
+
 import { ResourceTable } from './ResourceTable'
 
 const COLUMNS = [
@@ -49,7 +51,14 @@ function mockList(rows: unknown[]) {
   return requests
 }
 
-function renderTable(onOpen = vi.fn(), onContextMenu = vi.fn()) {
+interface Overrides {
+  selection?: Set<string>
+  onSelectionChange?: (next: Set<string>) => void
+  onDeleteSelected?: (rows: ResourceRow[]) => void
+  canWrite?: boolean
+}
+
+function renderTable(onOpen = vi.fn(), onContextMenu = vi.fn(), overrides: Overrides = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
@@ -66,6 +75,12 @@ function renderTable(onOpen = vi.fn(), onContextMenu = vi.fn()) {
         onNavigate={() => undefined}
         onDismiss={() => undefined}
         onContextMenu={onContextMenu}
+        selection={overrides.selection ?? new Set()}
+        onSelectionChange={overrides.onSelectionChange ?? (() => undefined)}
+        canWrite={overrides.canWrite ?? true}
+        onCreate={() => undefined}
+        onDeleteSelected={overrides.onDeleteSelected ?? (() => undefined)}
+        live={false}
       />
     </QueryClientProvider>,
   )
@@ -182,5 +197,143 @@ describe('ResourceTable', () => {
     const [row, at] = onContextMenu.mock.calls[0] as [{ name: string }, { x: number; y: number }]
     expect(row.name).toBe('payments-api-1')
     expect(typeof at.x).toBe('number')
+  })
+
+  it('selects a row without opening it', async () => {
+    mockList([pod('payments-api-1')])
+    const onSelectionChange = vi.fn()
+    const onOpen = vi.fn()
+    renderTable(onOpen, vi.fn(), { onSelectionChange })
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select payments-api-1' }))
+
+    expect(onSelectionChange).toHaveBeenCalledWith(new Set(['payments/payments-api-1']))
+    // Ticking a box is not the same gesture as opening the object.
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('selects every row from the header', async () => {
+    mockList([pod('a'), pod('b')])
+    const onSelectionChange = vi.fn()
+    renderTable(vi.fn(), vi.fn(), { onSelectionChange })
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Select all' }))
+
+    expect(onSelectionChange).toHaveBeenCalledWith(new Set(['payments/a', 'payments/b']))
+  })
+
+  // Some-but-not-all is its own state: an unticked box would say nothing is selected
+  // while rows below are.
+  it('shows a partial selection as indeterminate', async () => {
+    mockList([pod('a'), pod('b')])
+    renderTable(vi.fn(), vi.fn(), { selection: new Set(['payments/a']) })
+
+    const all = await screen.findByRole<HTMLInputElement>('checkbox', { name: 'Select all' })
+    expect(all.indeterminate).toBe(true)
+    expect(all.checked).toBe(false)
+  })
+
+  it('hands the delete button the rows that are selected', async () => {
+    mockList([pod('a'), pod('b')])
+    const onDeleteSelected = vi.fn<(rows: ResourceRow[]) => void>()
+    renderTable(vi.fn(), vi.fn(), { selection: new Set(['payments/b']), onDeleteSelected })
+
+    await userEvent.click(await screen.findByRole('button', { name: /Delete 1 selected/ }))
+
+    expect(onDeleteSelected).toHaveBeenCalledTimes(1)
+    const rows = onDeleteSelected.mock.calls[0]?.[0] ?? []
+    expect(rows.map((row) => row.name)).toEqual(['b'])
+  })
+
+  it('refuses to delete when nothing is selected', async () => {
+    mockList([pod('a')])
+    renderTable()
+
+    expect(await screen.findByRole('button', { name: /Select rows to delete/ })).toBeDisabled()
+  })
+
+  // Absent rather than inert: a control that can never work is clutter, not information.
+  it('offers no write buttons to someone who cannot write', async () => {
+    mockList([pod('a')])
+    renderTable(vi.fn(), vi.fn(), { canWrite: false })
+
+    await screen.findByText('a')
+    expect(screen.queryByRole('button', { name: /Create resource/ })).not.toBeInTheDocument()
+  })
+
+  // Retyping the name of the object you just clicked adds a step without adding a
+  // decision: it is on screen, and the dialog lists exactly what will go.
+  it('asks before deleting without making the reader retype a name', async () => {
+    mockList([pod('payments-api-1')])
+    const onDeleteSelected = vi.fn<(rows: ResourceRow[]) => void>()
+    renderTable(vi.fn(), vi.fn(), { selection: new Set(['payments/payments-api-1']), onDeleteSelected })
+
+    await userEvent.click(await screen.findByRole('button', { name: /Delete 1 selected/ }))
+
+    expect(onDeleteSelected).toHaveBeenCalledTimes(1)
+  })
+
+  // "Pending" is the question; the mark has to carry the answer, or the reader opens the
+  // object to learn what the row already knew.
+  it('says why a row is in trouble, not just that it is', async () => {
+    mockList([
+      pod('stuck', {
+        fields: {
+          status: 'Pending',
+          restarts: '0',
+          reason: 'Unschedulable',
+          trouble: '0/3 nodes are available: insufficient cpu.',
+        },
+        severity: 'error',
+      }),
+    ])
+    renderTable()
+
+    const mark = await screen.findByRole('img', { name: /insufficient cpu/ })
+    expect(mark).toHaveAttribute('title', expect.stringContaining('Unschedulable'))
+  })
+
+  it('names the container at fault when there is one', async () => {
+    mockList([
+      pod('looping', {
+        fields: {
+          status: 'Running',
+          restarts: '6',
+          reason: 'CrashLoopBackOff',
+          trouble: 'The container keeps exiting.',
+          troubleContainer: 'api',
+        },
+        severity: 'error',
+      }),
+    ])
+    renderTable()
+
+    expect(await screen.findByRole('img', { name: /CrashLoopBackOff · api/ })).toBeInTheDocument()
+  })
+
+  // A kind the server has no dedicated reading for still says whether it is settled.
+  it('falls back to the status when there is no reason', async () => {
+    mockList([pod('unknown-state', { fields: { status: 'Terminating', restarts: '0' }, severity: 'warning' })])
+    renderTable()
+
+    expect(await screen.findByRole('img', { name: 'Pod is Terminating' })).toBeInTheDocument()
+  })
+
+  it('leaves a healthy row unmarked', async () => {
+    mockList([pod('fine')])
+    renderTable()
+
+    await screen.findByText('fine')
+    expect(screen.queryByRole('img', { name: /Pod is/ })).not.toBeInTheDocument()
+  })
+
+  it('opens the action menu from the row kebab', async () => {
+    mockList([pod('payments-api-1')])
+    const onContextMenu = vi.fn()
+    renderTable(vi.fn(), onContextMenu)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for payments-api-1' }))
+
+    expect(onContextMenu).toHaveBeenCalled()
   })
 })

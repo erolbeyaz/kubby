@@ -52,6 +52,23 @@ const (
 	// which key was read, never the value: audit records access, not content.
 	ActionSecretRevealed = "secret.revealed"
 	ActionSecretCopied   = "secret.copied"
+
+	// Object mutations. Every attempt is recorded, including the ones that were refused:
+	// who tried to delete production is worth as much as who succeeded.
+	ActionObjectApplied    = "object.applied"
+	ActionObjectCreated    = "object.created"
+	ActionObjectDeleted    = "object.deleted"
+	ActionObjectScaled     = "object.scaled"
+	ActionObjectRestarted  = "object.restarted"
+	ActionObjectRolledBack = "object.rolled_back"
+	ActionPodEvicted       = "pod.evicted"
+	ActionCronJobTriggered = "cronjob.triggered"
+	ActionCronJobSuspended = "cronjob.suspended"
+	ActionNodeCordoned     = "node.cordoned"
+	ActionNodeDrained      = "node.drained"
+
+	// ActionSettingsChanged records which group of settings moved, never their values.
+	ActionSettingsChanged = "settings.changed"
 )
 
 const (

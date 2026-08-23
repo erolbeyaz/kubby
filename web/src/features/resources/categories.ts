@@ -31,3 +31,34 @@ export const CATEGORY_ICON: Record<ResourceCategory, IconName> = {
   cluster: 'clusters',
   custom: 'events',
 }
+
+/**
+ * How a kind is written in the navigation.
+ *
+ * Plural, and spaced the way people say it: "Daemon Sets", not "DaemonSets". The API's
+ * spelling belongs in the API; a list of things is read as a list of things.
+ */
+const IRREGULAR: Record<string, string> = {
+  Endpoints: 'Endpoints',
+  NetworkPolicy: 'Network Policies',
+  IngressClass: 'Ingress Classes',
+  StorageClass: 'Storage Classes',
+  PriorityClass: 'Priority Classes',
+  RuntimeClass: 'Runtime Classes',
+  Ingress: 'Ingresses',
+  PodDisruptionBudget: 'Pod Disruption Budgets',
+  HorizontalPodAutoscaler: 'Horizontal Pod Autoscalers',
+  MutatingWebhookConfiguration: 'Mutating Webhook Configurations',
+  ValidatingWebhookConfiguration: 'Validating Webhook Configurations',
+  PersistentVolumeClaim: 'Persistent Volume Claims',
+  PersistentVolume: 'Persistent Volumes',
+  ReplicationController: 'Replication Controllers',
+}
+
+export function kindLabel(kind: string): string {
+  const irregular = IRREGULAR[kind]
+  if (irregular) return irregular
+
+  const spaced = kind.replace(/([a-z])([A-Z])/g, '$1 $2')
+  return spaced.endsWith('s') ? spaced : `${spaced}s`
+}

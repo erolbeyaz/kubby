@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { stringify } from 'yaml'
 
 import { Callout } from '@/components/Callout'
+import { CopyButton } from '@/components/CopyButton'
 import { LazyYamlViewer, warmYamlViewer } from '@/components/LazyYamlViewer'
 import { ApiError, api, type ResourceRow } from '@/lib/api'
 import { formatAbsolute, formatAge } from '@/lib/time'
+import { toYaml } from '@/lib/yaml'
 
 import { availableActionsFor } from './actions'
 import { RestartBadge } from './RestartBadge'
@@ -21,8 +22,8 @@ interface ObjectDrawerProps {
   row: ResourceRow
   onClose: () => void
   onNavigate: (target: NavigationTarget) => void
-  /** Opens this object in the bottom dock. */
-  onOpenDock: (kind: 'logs' | 'describe') => void
+  /** Runs one of the object's actions. The panel decides which to offer, not what they do. */
+  onAction: (id: string) => void
 }
 
 type Pane = 'summary' | 'yaml'
@@ -34,7 +35,7 @@ type Pane = 'summary' | 'yaml'
  * keeping the list on screen means the next row is one click away instead of a
  * navigation round trip.
  */
-export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigate, onOpenDock }: ObjectDrawerProps) {
+export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigate, onAction }: ObjectDrawerProps) {
   const [pane, setPane] = useState<Pane>('summary')
 
   // Opening an object is a good predictor of reading its YAML, so the editor is fetched
@@ -80,7 +81,7 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
           {row.name}
         </h2>
 
-        <ActionIcons kind={kind} onOpenDock={onOpenDock} />
+        <ActionIcons kind={kind} onAction={onAction} />
 
         <button
           type="button"
@@ -102,6 +103,14 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
       >
         <PaneTab label="Summary" active={pane === 'summary'} onClick={() => setPane('summary')} />
         <PaneTab label="YAML" active={pane === 'yaml'} onClick={() => setPane('yaml')} />
+
+        {/* On the tab row rather than floating over the text: it acts on what the YAML
+            tab shows, and over the content it covered the first line of every manifest. */}
+        {pane === 'yaml' && data && (
+          <span className="ml-auto flex items-center pr-1.5">
+            <CopyButton value={toYaml(data)} label="Copy YAML" />
+          </span>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -136,7 +145,7 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
         {pane === 'yaml' &&
           (data ? (
             <div className="h-full">
-              <LazyYamlViewer value={toYaml(data)} ariaLabel={`${kind} ${row.name} as YAML`} />
+              <LazyYamlViewer value={toYaml(data)} ariaLabel={`${kind} ${row.name} as YAML`} hideCopy />
             </div>
           ) : (
             <DrawerSkeleton />
@@ -488,13 +497,15 @@ function LinkValue({ value, onClick }: { value: string; onClick?: (() => void) |
 }
 
 /** Actions that exist, and the ones later phases will enable. */
-function ActionIcons({
-  kind,
-  onOpenDock,
-}: {
-  kind: string
-  onOpenDock: (kind: 'logs' | 'describe') => void
-}) {
+/**
+ * The object's actions, as icons, beside its name.
+ *
+ * The same registry the right-click menu reads (ADR-053), in the same order, so the two
+ * cannot come to disagree about what an object can do. Actions a later phase brings are
+ * left out here rather than shown greyed: a menu has room to explain itself, a row of
+ * icons does not.
+ */
+function ActionIcons({ kind, onAction }: { kind: string; onAction: (id: string) => void }) {
   const actions = availableActionsFor(kind)
   if (actions.length === 0) return null
 
@@ -504,15 +515,20 @@ function ActionIcons({
         <button
           key={action.id}
           type="button"
-          onClick={() => action.dockTab && onOpenDock(action.dockTab)}
+          onClick={() => onAction(action.id)}
           title={action.shortcut ? `${action.label} (${action.shortcut})` : action.label}
           aria-label={action.label}
-          className="flex h-7 w-7 items-center justify-center transition-colors hover:bg-[var(--bg-hover)]"
-          style={{ borderRadius: 'var(--radius-sharp)', color: 'var(--text-muted)' }}
+          className="flex h-8 w-8 items-center justify-center transition-colors hover:bg-[var(--bg-hover)]"
+          style={{
+            borderRadius: 'var(--radius-sharp)',
+            color: action.destructive ? 'var(--status-error)' : 'var(--text-secondary)',
+          }}
         >
-          {action.icon}
+          <span className="scale-[1.35]">{action.icon}</span>
         </button>
       ))}
+
+      <span className="mx-0.5 h-4 w-px" style={{ backgroundColor: 'var(--border-default)' }} />
     </span>
   )
 }
@@ -534,14 +550,6 @@ function DrawerSkeleton() {
       ))}
     </div>
   )
-}
-
-function toYaml(object: unknown): string {
-  try {
-    return stringify(object, { indent: 2, lineWidth: 0 })
-  } catch {
-    return JSON.stringify(object, null, 2)
-  }
 }
 
 function PaneTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {

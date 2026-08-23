@@ -46,6 +46,8 @@ const SCALABLE = ['Deployment', 'StatefulSet', 'ReplicaSet', 'ReplicationControl
 const RESTARTABLE = ['Deployment', 'StatefulSet', 'DaemonSet']
 
 export const ACTIONS: ResourceAction[] = [
+  // The order is the order both surfaces show: what you do to a workload first, then
+  // what you read from it, then what you change, then what you cannot undo.
   {
     id: 'details',
     label: 'Show details',
@@ -53,6 +55,22 @@ export const ACTIONS: ResourceAction[] = [
     shortcut: 'Enter',
     icon: glyph('M2.5 3.5h11M2.5 8h11M2.5 12.5h7'),
   },
+  {
+    id: 'scale',
+    label: 'Scale',
+    kinds: SCALABLE,
+    icon: glyph('M3 9.5V13h3.5M12.5 6.5V3H9M3 13l4-4M13 3l-4 4'),
+  },
+  {
+    id: 'restart',
+    label: 'Restart',
+    kinds: RESTARTABLE,
+    icon: glyph('M13 8a5 5 0 11-1.6-3.7M13 2v3h-3'),
+  },
+  { id: 'trigger', label: 'Trigger', kinds: ['CronJob'], icon: glyph('M5 3.5l7 4.5-7 4.5z') },
+  { id: 'suspend', label: 'Suspend', kinds: ['CronJob'], icon: glyph('M6 4v8M10 4v8') },
+  { id: 'cordon', label: 'Cordon', kinds: ['Node'], icon: glyph('M8 2v12M2 8h12') },
+
   { id: 'logs', label: 'Logs', kinds: ['Pod'], dockTab: 'logs', shortcut: 'L', icon: glyph('M3 3.5h10M3 7h10M3 10.5h6') },
   {
     id: 'describe',
@@ -70,19 +88,27 @@ export const ACTIONS: ResourceAction[] = [
     comingIn: 'phase 8',
     icon: glyph('M2 8h8M7 5l3 3-3 3M12 3v10'),
   },
-  { id: 'edit', label: 'Edit', kinds: [], comingIn: 'phase 6', icon: glyph('M11 2.5l2.5 2.5-8 8H3v-2.5z') },
-  { id: 'scale', label: 'Scale', kinds: SCALABLE, comingIn: 'phase 6', icon: glyph('M3 9.5V13h3.5M12.5 6.5V3H9M3 13l4-4M13 3l-4 4') },
-  { id: 'restart', label: 'Restart', kinds: RESTARTABLE, comingIn: 'phase 6', icon: glyph('M13 8a5 5 0 11-1.6-3.7M13 2v3h-3') },
-  { id: 'trigger', label: 'Trigger', kinds: ['CronJob'], comingIn: 'phase 6', icon: glyph('M5 3.5l7 4.5-7 4.5z') },
-  { id: 'suspend', label: 'Suspend', kinds: ['CronJob'], comingIn: 'phase 6', icon: glyph('M6 4v8M10 4v8') },
-  { id: 'cordon', label: 'Cordon', kinds: ['Node'], comingIn: 'phase 6', icon: glyph('M8 2v12M2 8h12') },
-  { id: 'drain', label: 'Drain', kinds: ['Node'], comingIn: 'phase 6', destructive: true, icon: glyph('M3 4h10l-1.5 9h-7z M6.5 7v3M9.5 7v3') },
-  { id: 'evict', label: 'Evict', kinds: ['Pod'], comingIn: 'phase 6', destructive: true, icon: glyph('M6 8h7M10 5l3 3-3 3M7 3H3v10h4') },
+
+  { id: 'edit', label: 'Edit', kinds: [], icon: glyph('M11 2.5l2.5 2.5-8 8H3v-2.5z') },
+
+  {
+    id: 'drain',
+    label: 'Drain',
+    kinds: ['Node'],
+    destructive: true,
+    icon: glyph('M3 4h10l-1.5 9h-7z M6.5 7v3M9.5 7v3'),
+  },
+  {
+    id: 'evict',
+    label: 'Evict',
+    kinds: ['Pod'],
+    destructive: true,
+    icon: glyph('M6 8h7M10 5l3 3-3 3M7 3H3v10h4'),
+  },
   {
     id: 'delete',
     label: 'Delete',
     kinds: [],
-    comingIn: 'phase 6',
     destructive: true,
     icon: glyph('M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.7 9h5.6l.7-9M6.5 7v4M9.5 7v4'),
   },
@@ -103,7 +129,11 @@ export function actionsFor(kind: string): ResourceAction[] {
   return applicable.filter((action) => DATA_ONLY_ACTIONS.includes(action.id))
 }
 
-/** The subset that works today, for the panel's icon strip. */
+/**
+ * The subset that works today, for the panel's icon strip.
+ *
+ * "Show details" is left out: the panel it would open is the one being looked at.
+ */
 export function availableActionsFor(kind: string): ResourceAction[] {
-  return actionsFor(kind).filter((action) => !action.comingIn && action.dockTab)
+  return actionsFor(kind).filter((action) => !action.comingIn && action.id !== 'details')
 }

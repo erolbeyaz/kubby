@@ -59,6 +59,8 @@ export function ClusterOverview({ cluster, onNavigate, onOpenCluster }: ClusterO
           <Donut
             title="CPU"
             total={data?.cpu.allocatable ?? 0}
+            allocatable={data?.cpu.allocatable ?? 0}
+            capacity={data?.cpu.capacity ?? 0}
             segments={gaugeSegments(data?.cpu)}
             format={(value) => `${value.toFixed(2)} cores`}
           />
@@ -67,6 +69,8 @@ export function ClusterOverview({ cluster, onNavigate, onOpenCluster }: ClusterO
           <Donut
             title="Memory"
             total={data?.memory.allocatable ?? 0}
+            allocatable={data?.memory.allocatable ?? 0}
+            capacity={data?.memory.capacity ?? 0}
             segments={gaugeSegments(data?.memory)}
             format={formatMiB}
           />
@@ -75,6 +79,8 @@ export function ClusterOverview({ cluster, onNavigate, onOpenCluster }: ClusterO
           <Donut
             title="Pods"
             total={data?.pods.allocatable ?? 0}
+            allocatable={data?.pods.allocatable ?? 0}
+            capacity={data?.pods.capacity ?? 0}
             segments={[
               { label: 'Running', value: data?.pods.usage ?? 0, color: 'var(--status-ok)' },
             ]}

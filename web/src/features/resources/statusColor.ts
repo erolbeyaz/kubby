@@ -5,7 +5,7 @@
  * explicit rather than guessed from substrings — "Terminating" and "Terminated" mean
  * different things, and a fuzzy match would colour them the same.
  */
-const GOOD = new Set(['Running', 'Ready', 'Bound', 'Active', 'Succeeded', 'Available', 'True'])
+const GOOD = new Set(['Running', 'Ready', 'Bound', 'Active', 'Succeeded', 'Available', 'True', 'Normal', 'Completed'])
 const BUSY = new Set(['Pending', 'ContainerCreating', 'PodInitializing', 'Terminating', 'Progressing'])
 const BAD = new Set([
   'Failed',
@@ -19,6 +19,9 @@ const BAD = new Set([
   'Unknown',
   'Lost',
   'Unbound',
+  // An event's own type. A Warning is the reason the events screen gets opened, so it
+  // is coloured like the trouble it reports rather than like a category label.
+  'Warning',
 ])
 
 export function statusColor(value: string): string {
