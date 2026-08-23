@@ -1,151 +1,169 @@
-
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 import { AccountMenu, type AccountAction } from '@/components/AccountMenu'
+import { ClusterPicker } from '@/components/ClusterPicker'
 import { EmptyState } from '@/components/EmptyState'
 import { Logo } from '@/components/Logo'
-import { IconRail, type RailItem } from '@/components/IconRail'
-import { SecondaryPanel } from '@/components/SecondaryPanel'
 import { StatusBar } from '@/components/StatusBar'
-import { TabBar, type WorkspaceTab } from '@/components/TabBar'
 import { AccountScreen } from '@/features/account/AccountScreen'
-import { ClustersScreen } from '@/features/clusters/ClustersScreen'
+import { ManageClustersScreen } from '@/features/clusters/ManageClustersScreen'
+import { ResourceExplorer } from '@/features/resources/ResourceExplorer'
 import { UsersScreen } from '@/features/users/UsersScreen'
-import type { Me } from '@/lib/api'
+import { api, type Me } from '@/lib/api'
 
 import { useNavigation } from './navigation'
 import { useServerStatus } from './use-server-status'
-
-const RAIL_ITEMS: readonly RailItem[] = [
-  { id: 'health', label: 'Health', icon: 'health' },
-  { id: 'clusters', label: 'Clusters', icon: 'clusters' },
-  { id: 'workloads', label: 'Workloads', icon: 'workloads' },
-  { id: 'network', label: 'Network', icon: 'network' },
-  { id: 'storage', label: 'Storage', icon: 'storage' },
-  { id: 'events', label: 'Events', icon: 'events' },
-  { id: 'terminal', label: 'Terminal', icon: 'terminal' },
-  { id: 'settings', label: 'Settings', icon: 'settings' },
-]
-
-const PANEL_TITLE: Record<string, string> = {
-  health: 'Health',
-  clusters: 'Clusters',
-  workloads: 'Workloads',
-  network: 'Network',
-  storage: 'Storage',
-  events: 'Events',
-  terminal: 'Sessions',
-  settings: 'Settings',
-}
-
-type SettingsView = 'account' | 'users'
 
 interface ShellProps {
   me: Me
   onSignOut: () => void
 }
 
+/**
+ * The workspace.
+ *
+ * The cluster picker governs the window: everything below it is "within this cluster".
+ * Navigation for a cluster's resources lives in the explorer's own panel, so the chrome
+ * carries no menus that lead nowhere.
+ */
 export function Shell({ me, onSignOut }: ShellProps) {
   const { location, navigate } = useNavigation()
   const [accountFocus, setAccountFocus] = useState<AccountAction | null>(null)
   const { connection, detail, version } = useServerStatus()
 
-  const activeSection = location.section
-  const settingsView: SettingsView = location.settingsView
-  const canManageUsers = me.permissions.includes('user.manage')
+  const canManage = me.permissions.includes('cluster.manage')
 
-  // The account menu jumps straight to the relevant section rather than dropping the
-  // user on a settings page they then have to navigate.
+  const clusters = useQuery({
+    queryKey: ['clusters'],
+    queryFn: ({ signal }) => api.clusters(signal),
+    refetchInterval: 30_000,
+  })
+
+  const list = clusters.data?.clusters ?? []
+  const current = list.find((c) => c.id === location.clusterId) ?? null
+
   const openAccount = (action: AccountAction) => {
     navigate({ section: 'settings', settingsView: 'account' })
     setAccountFocus(action)
   }
-  const tabs: readonly WorkspaceTab[] =
-    activeSection === 'settings'
-      ? [{ id: settingsView, label: settingsView === 'account' ? 'Account' : 'Users' }]
-      : activeSection === 'clusters'
-        ? [{ id: 'clusters', label: 'Clusters' }]
-        : [{ id: 'welcome', label: 'Welcome' }]
 
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: 'var(--bg-base)' }}>
-      <div className="flex min-h-0 flex-1">
-        <IconRail
-          items={RAIL_ITEMS}
-          activeId={activeSection}
-          onSelect={(section) => navigate({ section, clusterId: null })}
+      <header
+        className="flex h-11 shrink-0 items-center gap-3 border-b px-3"
+        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-subtle)' }}
+      >
+        <button
+          type="button"
+          onClick={() => navigate({ section: 'clusters', clusterId: null, objectName: null })}
+          className="flex shrink-0 items-center gap-2"
+          aria-label="Kubby home"
+        >
+          <Logo size={20} />
+        </button>
+
+        <ClusterPicker
+          clusters={list}
+          current={current}
+          canManage={canManage}
+          onSelect={(clusterId) =>
+            navigate({ section: 'clusters', clusterId, namespaces: [], typeKey: 'overview', objectName: null })
+          }
+          onManage={() => navigate({ section: 'manage' })}
         />
 
-        <SecondaryPanel title={PANEL_TITLE[activeSection] ?? 'Kubby'}>
-          {activeSection === 'clusters' ? (
-            <p className="px-3 py-2" style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-muted)' }}>
-              Select a cluster to see its details.
-            </p>
-          ) : activeSection === 'settings' ? (
-            <nav className="flex flex-col p-1">
-              <PanelLink
-                label="Account"
-                active={settingsView === 'account'}
-                onClick={() => navigate({ section: 'settings', settingsView: 'account' })}
-              />
-              {canManageUsers && (
-                <PanelLink
-                  label="Users"
-                  active={settingsView === 'users'}
-                  onClick={() => navigate({ section: 'settings', settingsView: 'users' })}
-                />
-              )}
-            </nav>
-          ) : (
-            <p className="px-3 py-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
-              No clusters configured yet.
-            </p>
-          )}
-
-        </SecondaryPanel>
-
-        <main className="flex min-w-0 flex-1 flex-col">
-          <div
-            className="flex h-11 shrink-0 items-center justify-between gap-3 border-b px-3"
-            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-subtle)' }}
+        {location.section !== 'clusters' && (
+          <span
+            className="font-mono uppercase tracking-[0.1em]"
+            style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
           >
-            <div className="flex items-center gap-2">
-              <Logo size={22} />
-              <span
-                className="font-semibold tracking-[0.14em]"
-                style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-secondary)' }}
-              >
-                KUBBY
-              </span>
-            </div>
-            <AccountMenu me={me} onSelect={openAccount} onSignOut={onSignOut} />
-          </div>
+            {location.section === 'manage' ? 'clusters' : location.settingsView}
+          </span>
+        )}
 
-          <TabBar tabs={tabs} activeId={tabs[0]?.id ?? ''} onSelect={() => undefined} />
-          <div className="min-h-0 flex-1">
-            {activeSection === 'settings' && settingsView === 'account' && (
-              <AccountScreen me={me} focus={accountFocus} />
-            )}
-            {activeSection === 'settings' && settingsView === 'users' && canManageUsers && <UsersScreen me={me} />}
-            {activeSection === 'clusters' && (
-              <ClustersScreen
-                me={me}
-                selectedId={location.clusterId}
-                onSelect={(clusterId) => navigate({ section: 'clusters', clusterId })}
-              />
-            )}
-            {activeSection !== 'settings' && activeSection !== 'clusters' && (
-              <EmptyState
-                title="Not built yet"
-                description="Cluster connections are in place. Resource browsing, logs and the health panel arrive in the next phases."
-                hint="Phase 3 — cluster connections"
-              />
-            )}
-          </div>
-        </main>
+        <span className="ml-auto">
+          <AccountMenu me={me} onSelect={openAccount} onSignOut={onSignOut} />
+        </span>
+      </header>
+
+      <div className="min-h-0 flex-1">
+        {location.section === 'settings' ? (
+          <SettingsArea
+            me={me}
+            view={location.settingsView}
+            focus={accountFocus}
+            onViewChange={(settingsView) => navigate({ section: 'settings', settingsView })}
+          />
+        ) : location.section === 'manage' ? (
+          <ManageClustersScreen
+            me={me}
+            onOpenCluster={(clusterId) =>
+              navigate({ section: 'clusters', clusterId, namespaces: [], typeKey: 'overview', objectName: null })
+            }
+          />
+        ) : current ? (
+          <ResourceExplorer
+            cluster={current}
+            location={location}
+            onNavigate={navigate}
+            canManage={canManage}
+          />
+        ) : clusters.isLoading ? (
+          <EmptyState title="Loading clusters…" description="" />
+        ) : list.length === 0 ? (
+          <EmptyState
+            title="No clusters yet"
+            description={
+              canManage
+                ? 'Add a cluster to start browsing it.'
+                : 'No clusters have been shared with you yet.'
+            }
+            {...(canManage ? { hint: 'Use the picker above → Manage clusters' } : {})}
+          />
+        ) : (
+          <EmptyState
+            title="Pick a cluster"
+            description="Choose one from the picker in the top-left corner."
+          />
+        )}
       </div>
 
       <StatusBar connection={connection} version={version} detail={detail} />
+    </div>
+  )
+}
+
+function SettingsArea({
+  me,
+  view,
+  focus,
+  onViewChange,
+}: {
+  me: Me
+  view: 'account' | 'users'
+  focus: AccountAction | null
+  onViewChange: (view: 'account' | 'users') => void
+}) {
+  const canManageUsers = me.permissions.includes('user.manage')
+
+  return (
+    <div className="flex h-full">
+      <nav
+        className="w-48 shrink-0 border-r p-1"
+        style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}
+        aria-label="Settings"
+      >
+        <PanelLink label="Account" active={view === 'account'} onClick={() => onViewChange('account')} />
+        {canManageUsers && (
+          <PanelLink label="Users" active={view === 'users'} onClick={() => onViewChange('users')} />
+        )}
+      </nav>
+
+      <div className="min-w-0 flex-1">
+        {view === 'account' && <AccountScreen me={me} focus={focus} />}
+        {view === 'users' && canManageUsers && <UsersScreen me={me} />}
+      </div>
     </div>
   )
 }
@@ -155,9 +173,10 @@ function PanelLink({ label, active, onClick }: { label: string; active: boolean;
     <button
       type="button"
       onClick={onClick}
-      className="flex h-8 items-center px-2.5 text-left text-[13px] transition-colors"
+      className="flex h-8 w-full items-center px-2.5 text-left transition-colors"
       style={{
         borderRadius: 'var(--radius-sharp)',
+        fontSize: 'var(--text-secondary-size)',
         color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
         backgroundColor: active ? 'var(--bg-active)' : 'transparent',
       }}

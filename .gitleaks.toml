@@ -21,4 +21,11 @@ regexes = [
   '''CHANGE_ME[A-Z_0-9]*''',
   '''<from-secret>''',
   '''<base64-32-bytes>''',
+
+  # The value seeded into the throwaway test cluster, and its base64 form. Tests assert
+  # this string does NOT appear in resource listings, so it has to be written down to be
+  # checked for. Allowlisted by exact value rather than by file, so a real secret in the
+  # same test file is still caught.
+  '''not-a-real-password-for-testing''',
+  '''bm90LWEtcmVhbC1wYXNzd29yZC1mb3ItdGVzdGluZw==''',
 ]

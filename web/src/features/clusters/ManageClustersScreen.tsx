@@ -12,15 +12,21 @@ import { ClusterDetail } from './ClusterDetail'
 import { StatusBadge } from './StatusBadge'
 import { environmentColor } from './environment'
 
-interface ClustersScreenProps {
+interface ManageClustersScreenProps {
   me: Me
-  /** Which cluster is open, taken from the URL so back and reload both work. */
-  selectedId: string | null
-  onSelect: (clusterId: string | null) => void
+  onOpenCluster: (clusterId: string) => void
 }
 
-export function ClustersScreen({ me, selectedId, onSelect }: ClustersScreenProps) {
+/**
+ * Registering and configuring clusters.
+ *
+ * Deliberately separate from browsing: adding a cluster is an occasional administrative
+ * act, while switching between them is constant. Mixing the two put a setup form in the
+ * path of everyday navigation.
+ */
+export function ManageClustersScreen({ me, onOpenCluster }: ManageClustersScreenProps) {
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
 
   const canManage = me.permissions.includes('cluster.manage')
 
@@ -31,10 +37,10 @@ export function ClustersScreen({ me, selectedId, onSelect }: ClustersScreenProps
   })
 
   const list = clusters.data?.clusters ?? []
-  const current = list.find((c) => c.id === selectedId)
+  const current = list.find((c) => c.id === editing)
 
   if (current) {
-    return <ClusterDetail cluster={current} canManage={canManage} onBack={() => onSelect(null)} />
+    return <ClusterDetail cluster={current} canManage={canManage} onBack={() => setEditing(null)} />
   }
 
   return (
@@ -88,13 +94,23 @@ export function ClustersScreen({ me, selectedId, onSelect }: ClustersScreenProps
           />
         )}
 
-        {list.length > 0 && <ClusterTable clusters={list} onOpen={onSelect} />}
+        {list.length > 0 && (
+          <ClusterTable clusters={list} onOpen={onOpenCluster} onConfigure={setEditing} />
+        )}
       </div>
     </div>
   )
 }
 
-function ClusterTable({ clusters, onOpen }: { clusters: Cluster[]; onOpen: (id: string) => void }) {
+function ClusterTable({
+  clusters,
+  onOpen,
+  onConfigure,
+}: {
+  clusters: Cluster[]
+  onOpen: (id: string) => void
+  onConfigure: (id: string) => void
+}) {
   const queryClient = useQueryClient()
 
   const test = useMutation({
@@ -175,13 +191,19 @@ function ClusterTable({ clusters, onOpen }: { clusters: Cluster[]; onOpen: (id: 
               {cluster.lastValidatedAt ? `${formatAge(cluster.lastValidatedAt)} ago` : 'never'}
             </td>
 
-            <td className="px-4 py-2.5 text-right">
-              <Button
-                loading={test.isPending && test.variables === cluster.id}
-                onClick={() => test.mutate(cluster.id)}
-              >
-                Test
-              </Button>
+            <td className="px-4 py-2.5">
+              <span className="flex justify-end gap-2">
+                <Button
+                  loading={test.isPending && test.variables === cluster.id}
+                  onClick={() => test.mutate(cluster.id)}
+                >
+                  Test
+                </Button>
+                <Button onClick={() => onConfigure(cluster.id)}>Configure</Button>
+                <Button variant="primary" onClick={() => onOpen(cluster.id)}>
+                  Browse
+                </Button>
+              </span>
             </td>
           </tr>
         ))}

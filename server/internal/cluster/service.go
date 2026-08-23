@@ -17,6 +17,11 @@ import (
 )
 
 var (
+	ErrResourceNotFound   = errors.New("resource not found")
+	ErrClusterForbidden   = errors.New("the cluster credential is not permitted")
+	ErrCredentialRejected = errors.New("the cluster credential was rejected")
+	ErrKindUnavailable    = errors.New("this kind is not available on this cluster")
+
 	ErrReadOnlyCluster = errors.New("this cluster is locked read-only")
 	ErrNoCredential    = errors.New("cluster has no stored credential")
 	ErrNotPermitted    = errors.New("you do not have access to this cluster")
@@ -36,13 +41,27 @@ type Settings struct {
 // Service owns the cluster lifecycle: validating pasted kubeconfigs, storing them
 // encrypted, and producing clients.
 type Service struct {
-	clusters *store.ClusterRepo
-	keyring  *crypto.Keyring
-	settings Settings
+	clusters  *store.ClusterRepo
+	keyring   *crypto.Keyring
+	settings  Settings
+	pool      *InformerPool
+	discovery *discoveryCache
 }
 
 func NewService(db *store.DB, keyring *crypto.Keyring, settings Settings) *Service {
-	return &Service{clusters: db.Clusters(), keyring: keyring, settings: settings}
+	return &Service{
+		clusters:  db.Clusters(),
+		keyring:   keyring,
+		settings:  settings,
+		discovery: newDiscoveryCache(),
+	}
+}
+
+// WithInformerPool attaches a cache. Without one the service still works, listing
+// everything on demand — which is what tests and one-shot commands want.
+func (s *Service) WithInformerPool(pool *InformerPool) *Service {
+	s.pool = pool
+	return s
 }
 
 // AddressPolicy is the SSRF policy the service applies to pasted kubeconfigs.

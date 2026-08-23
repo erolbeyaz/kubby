@@ -221,6 +221,75 @@ export const clusterGrantSchema = z.object({
 })
 export const clusterGrantsSchema = z.object({ grants: z.array(clusterGrantSchema) })
 
+export const resourceTypeSchema = z.object({
+  key: z.string(),
+  kind: z.string(),
+  group: z.string().optional(),
+  namespaced: z.boolean(),
+  category: z.enum(['workload', 'config', 'network', 'storage', 'access', 'cluster', 'custom']),
+  cached: z.boolean(),
+})
+export const resourceTypesSchema = z.object({ types: z.array(resourceTypeSchema) })
+export const namespacesSchema = z.object({ namespaces: z.array(z.string()) })
+
+export const columnSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  mono: z.boolean().optional(),
+  link: z.enum(['namespace', 'owner', 'node']).optional(),
+  status: z.boolean().optional(),
+})
+
+export const rowSchema = z.object({
+  name: z.string(),
+  namespace: z.string().optional(),
+  age: z.string(),
+  createdAt: z.string(),
+  fields: z.record(z.string(), z.string()),
+  severity: z.enum(['warning', 'error']).optional(),
+})
+
+export const resourceListSchema = z.object({
+  columns: z.array(columnSchema),
+  rows: z.array(rowSchema),
+  total: z.number(),
+  fromCache: z.boolean(),
+  warming: z.boolean().optional(),
+  continue: z.string().optional(),
+})
+
+const gaugeSchema = z.object({
+  usage: z.number(),
+  requests: z.number(),
+  limits: z.number(),
+  allocatable: z.number(),
+  capacity: z.number(),
+  unit: z.string(),
+})
+
+export const overviewSchema = z.object({
+  nodes: z.number(),
+  nodesReady: z.number(),
+  namespaces: z.number(),
+  metricsAvailable: z.boolean(),
+  k8sVersion: z.string(),
+  cpu: gaugeSchema,
+  memory: gaugeSchema,
+  pods: gaugeSchema,
+  problems: z
+    .array(
+      z.object({
+        kind: z.string(),
+        namespace: z.string().optional(),
+        name: z.string(),
+        reason: z.string(),
+        severity: z.string(),
+      }),
+    )
+    .nullable()
+    .optional(),
+})
+
 export const auditEventSchema = z.object({
   id: z.number(),
   occurredAt: z.string(),
@@ -248,6 +317,13 @@ export type Probe = z.infer<typeof probeSchema>
 export type ValidateResult = z.infer<typeof validateKubeconfigSchema>
 export type ClusterGrant = z.infer<typeof clusterGrantSchema>
 export type Environment = Cluster['environment']
+export type ResourceType = z.infer<typeof resourceTypeSchema>
+export type ResourceCategory = ResourceType['category']
+export type Column = z.infer<typeof columnSchema>
+export type ResourceRow = z.infer<typeof rowSchema>
+export type ResourceList = z.infer<typeof resourceListSchema>
+export type Overview = z.infer<typeof overviewSchema>
+export type Gauge = z.infer<typeof gaugeSchema>
 export type CredentialStatus = Cluster['credentialStatus']
 
 // ---------------------------------------------------------------- endpoints
@@ -318,6 +394,45 @@ export const api = {
     request(`/api/v1/clusters/${id}/grants`, clusterGrantsSchema, { signal }),
   setClusterGrant: (id: string, body: { userId: string; accessLevel: string }) =>
     request(`/api/v1/clusters/${id}/grants`, clusterGrantsSchema, { method: 'PUT', body }),
+
+  resourceTypes: (clusterId: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${clusterId}/resource-types`, resourceTypesSchema, { signal }),
+  overview: (clusterId: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${clusterId}/overview`, overviewSchema, { signal }),
+  namespaces: (clusterId: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${clusterId}/namespaces`, namespacesSchema, { signal }),
+
+  resources: (
+    clusterId: string,
+    typeKey: string,
+    params: { namespace?: string; search?: string; sort?: string; desc?: boolean } = {},
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams()
+    if (params.namespace) query.set('namespace', params.namespace)
+    if (params.search) query.set('search', params.search)
+    if (params.sort) query.set('sort', params.sort)
+    if (params.desc) query.set('desc', 'true')
+
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return request(`/api/v1/clusters/${clusterId}/resources/${typeKey}${suffix}`, resourceListSchema, { signal })
+  },
+
+  resourceObject: (
+    clusterId: string,
+    typeKey: string,
+    params: { name: string; namespace?: string },
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams({ name: params.name })
+    if (params.namespace) query.set('namespace', params.namespace)
+
+    return request(
+      `/api/v1/clusters/${clusterId}/object/${typeKey}?${query.toString()}`,
+      z.record(z.string(), z.unknown()),
+      { signal },
+    )
+  },
 
   audit: (params: { limit?: number } = {}, signal?: AbortSignal) => {
     const query = new URLSearchParams()

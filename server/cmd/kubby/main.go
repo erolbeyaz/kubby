@@ -98,13 +98,16 @@ func run() error {
 		Issuer:             cfg.HTTP.PublicURL.Hostname(),
 	})
 
+	informerPool := cluster.NewInformerPool(cfg.K8s.InformerIdleTTL, logger)
+	defer informerPool.Close()
+
 	clusterService := cluster.NewService(db, keyring, cluster.Settings{
 		DefaultQPS:     cfg.K8s.QPS,
 		DefaultBurst:   cfg.K8s.Burst,
 		Timeout:        cfg.K8s.Timeout,
 		AllowLoopback:  cfg.K8s.AllowLoopbackClusters,
 		AllowInCluster: cfg.K8s.AllowInCluster,
-	})
+	}).WithInformerPool(informerPool)
 
 	auditLog := audit.New(db.Audit(), logger)
 

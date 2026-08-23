@@ -79,6 +79,7 @@ describe('App routing by session state', () => {
           readOnly: false,
         },
       },
+      '/api/v1/clusters': { status: 200, body: { clusters: [] } },
       '/readyz': { status: 200, body: { status: 'ok' } },
       '/version': {
         status: 200,
@@ -87,7 +88,9 @@ describe('App routing by session state', () => {
     })
     renderApp()
 
-    await waitFor(() => expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Select cluster' })).toBeInTheDocument(),
+    )
     expect(screen.getByRole('button', { name: /account: first admin/i })).toBeInTheDocument()
   })
 

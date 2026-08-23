@@ -41,6 +41,11 @@ export default defineConfig({
       ]),
     ),
   },
+  // Monaco ships one worker per language service; only the core editor worker is
+  // needed for read-only YAML, and naming it keeps the bundle predictable.
+  worker: {
+    format: 'es',
+  },
   build: {
     outDir: 'dist',
     sourcemap: false,

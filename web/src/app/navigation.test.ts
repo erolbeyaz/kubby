@@ -6,29 +6,64 @@ describe('navigation', () => {
   it('round-trips every navigable view through a URL', () => {
     const cases = [
       '/clusters',
-      '/clusters/8f14e45f-ceea-467a-9dd6-1b8f0b2d3c4e',
+      '/clusters/c1/payments/pods',
+      '/clusters/c1/payments/apps/deployments',
+      '/clusters/c1/-/nodes',
+      '/manage',
       '/settings/account',
       '/settings/users',
-      '/health',
     ]
 
     for (const path of cases) {
-      expect(buildPath(parseLocation(path))).toBe(path)
+      expect(buildPath(parseLocation(path, ''))).toBe(path)
     }
   })
 
-  it('defaults to the cluster list', () => {
-    expect(parseLocation('/')).toMatchObject({ section: 'clusters', clusterId: null })
-    expect(parseLocation('')).toMatchObject({ section: 'clusters' })
+  // Everything that changes the screen has to be in the URL, or back cannot retrace it.
+  it('carries the open object', () => {
+    const location = parseLocation('/clusters/c1/payments/pods', '?object=ledger-0')
+
+    expect(location.objectName).toBe('ledger-0')
+    expect(buildPath(location)).toBe('/clusters/c1/payments/pods?object=ledger-0')
   })
 
-  it('reads the open cluster from the path so a reload keeps it open', () => {
-    expect(parseLocation('/clusters/abc-123').clusterId).toBe('abc-123')
-    expect(parseLocation('/clusters').clusterId).toBeNull()
+  it('keeps grouped kinds addressable', () => {
+    const location = parseLocation('/clusters/c1/payments/apps/deployments', '')
+
+    expect(location.typeKey).toBe('apps/deployments')
+    expect(location.namespaces).toEqual(['payments'])
+  })
+
+  // A dash keeps the path shape constant for cluster-wide views.
+  it('uses a dash for cluster-wide views', () => {
+    expect(parseLocation('/clusters/c1/-/nodes', '').namespaces).toEqual([])
+    expect(buildPath({ ...parseLocation('/clusters/c1/-/nodes', '') })).toBe('/clusters/c1/-/nodes')
+  })
+
+  // A service rarely lives in exactly one namespace.
+  it('carries several namespaces at once', () => {
+    const location = parseLocation('/clusters/c1/payments,storefront/pods', '')
+
+    expect(location.namespaces).toEqual(['payments', 'storefront'])
+    expect(buildPath(location)).toBe('/clusters/c1/payments%2Cstorefront/pods')
+  })
+
+  it('defaults to the cluster list', () => {
+    expect(parseLocation('/', '')).toMatchObject({ section: 'clusters', clusterId: null })
   })
 
   it('falls back to the account view for an unknown settings page', () => {
-    expect(parseLocation('/settings/nonsense').settingsView).toBe('account')
-    expect(parseLocation('/settings/users').settingsView).toBe('users')
+    expect(parseLocation('/settings/nonsense', '').settingsView).toBe('account')
+  })
+
+  // The list may span every namespace while the open object belongs to exactly one.
+  // Losing that on reload made the object fetch 404 in a retry loop.
+  it('keeps the open object namespace apart from the filter', () => {
+    const location = parseLocation('/clusters/c1/-/pods', '?object=api-7f9&ns=payments')
+
+    expect(location.namespaces).toEqual([])
+    expect(location.objectName).toBe('api-7f9')
+    expect(location.objectNamespace).toBe('payments')
+    expect(buildPath(location)).toBe('/clusters/c1/-/pods?object=api-7f9&ns=payments')
   })
 })

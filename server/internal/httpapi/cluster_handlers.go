@@ -266,6 +266,10 @@ func (h *clusterHandlers) replaceCredential(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// The cache was built with the credential that just went away; keeping it would
+	// mean watching with something the cluster no longer accepts.
+	h.svc.ReleaseCache(c.ID)
+
 	h.audit.Record(r.Context(), audit.Event{
 		Action: audit.ActionClusterCredentialUpdated, Result: audit.ResultSuccess,
 		ActorID: &actor.ID, ActorEmail: actor.Email, IPAddress: clientAddr(r),
@@ -353,6 +357,7 @@ func (h *clusterHandlers) remove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "could not delete the cluster")
 		return
 	}
+	h.svc.ReleaseCache(c.ID)
 
 	h.audit.Record(r.Context(), audit.Event{
 		Action: audit.ActionClusterDeleted, Result: audit.ResultSuccess,

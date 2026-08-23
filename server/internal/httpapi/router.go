@@ -66,6 +66,10 @@ func New(d Deps) *Server {
 		users:    d.Store.Users(),
 		audit:    d.Audit,
 	}
+	resourceAPI := &resourceHandlers{
+		svc:      d.Cluster,
+		clusters: d.Store.Clusters(),
+	}
 	userAPI := &userHandlers{
 		users:     d.Store.Users(),
 		sessions:  d.Store.Sessions(),
@@ -134,6 +138,14 @@ func New(d Deps) *Server {
 				cl.Get("/clusters", clusterAPI.list)
 				cl.Get("/clusters/{id}", clusterAPI.get)
 				cl.Post("/clusters/{id}/test", clusterAPI.test)
+
+				cl.Get("/clusters/{id}/overview", resourceAPI.overview)
+				cl.Get("/clusters/{id}/namespaces", resourceAPI.listNamespaces)
+				cl.Get("/clusters/{id}/resource-types", resourceAPI.listTypes)
+				// The type key carries a slash for grouped kinds ("apps/deployments"),
+				// so these are wildcard routes rather than path parameters.
+				cl.Get("/clusters/{id}/resources/*", resourceAPI.list)
+				cl.Get("/clusters/{id}/object/*", resourceAPI.get)
 			})
 
 			authed.With(requirePermission(rbac.PermClusterManage)).Group(func(cl chi.Router) {
