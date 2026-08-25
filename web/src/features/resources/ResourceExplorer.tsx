@@ -4,19 +4,28 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Location } from '@/app/navigation'
 import { Callout } from '@/components/Callout'
 import { EmptyState } from '@/components/EmptyState'
+import { DockLauncher } from '@/components/DockLauncher'
 import { ResizablePanel } from '@/components/ResizablePanel'
-import { ApiError, api, type Cluster, type ResourceRow } from '@/lib/api'
+import { ApiError, api, type Cluster, type Forward, type ResourceRow } from '@/lib/api'
 
 import { ClusterOverview } from './ClusterOverview'
 import { ObjectDrawer } from './ObjectDrawer'
 import { BottomDock } from '@/components/BottomDock'
 import { HealthPanel } from '@/features/health/HealthPanel'
+import { HelmReleases } from '@/features/helm/HelmReleases'
 import { DescribePane } from '@/features/logs/DescribePane'
 import { LogPane } from '@/features/logs/LogPane'
 import { ClusterPicker } from '@/components/ClusterPicker'
 import { ContextMenu, type MenuItem } from '@/components/ContextMenu'
 import { CreatePane } from '@/features/create/CreatePane'
-import { TAB_ICONS, closeTab, openCreateTab, openTab, tabLabel, type DockTab } from '@/features/logs/dock'
+import { TAB_ICONS, closeTab, openCreateTab, openTab, tabId, tabLabel, type DockTab } from '@/features/logs/dock'
+import { ClusterTerminalPane } from '@/features/terminal/ClusterTerminalPane'
+import { ShellPane } from '@/features/terminal/ShellPane'
+import { TerminalPane } from '@/features/terminal/TerminalPane'
+import { nodeShellPath } from '@/lib/exec-stream'
+
+import { ForwardPane } from './ForwardPane'
+import { PortForwardDialog } from './PortForwardDialog'
 
 import { WorkloadsOverview } from './WorkloadsOverview'
 import { ActionRunner, type PendingAction } from './ActionRunner'
@@ -36,6 +45,12 @@ interface ResourceExplorerProps {
   canManage: boolean
   onSelectCluster: (clusterId: string) => void
   onManageClusters: () => void
+  /**
+   * The status strip, rendered inside this column so the rail reaches the bottom. It is
+   * given the dock's + to carry, which is why it arrives as a function rather than an
+   * element: the + belongs to this screen, the strip does not.
+   */
+  footer?: (leading: React.ReactNode) => React.ReactNode
 }
 
 /**
@@ -52,6 +67,7 @@ export function ResourceExplorer({
   canManage,
   onSelectCluster,
   onManageClusters,
+  footer,
 }: ResourceExplorerProps) {
   const queryClient = useQueryClient()
   const [clickedRow, setClickedRow] = useState<ResourceRow | null>(null)
@@ -66,6 +82,10 @@ export function ResourceExplorer({
   const [pending, setPending] = useState<PendingAction | null>(null)
   const [scaling, setScaling] = useState<ResourceRow | null>(null)
   const [draining, setDraining] = useState<string | null>(null)
+  const [forwarding, setForwarding] = useState<ResourceRow | null>(null)
+  // Open tunnels, keyed by the tab showing them. The session lives on the server; this is
+  // only what the tab needs to render it.
+  const [forwards, setForwards] = useState<Map<string, Forward>>(new Map())
   // A write sets off a short window of close attention, so what the cluster does next is
   // watched rather than discovered fifteen seconds later.
   const [live, setLive] = useState(false)
@@ -112,17 +132,50 @@ export function ResourceExplorer({
       case 'describe':
         openDock(id, row)
         return
+      case 'shell':
+        openDock('shell', row)
+        return
+      case 'node-shell':
+        openDock('node-shell', row)
+        return
+      case 'forward':
+        setForwarding(row)
+        return
       default:
         setPending({ id, clusterId: cluster.id, typeKey: location.typeKey, kind, row })
     }
   }
+
+  // What the dock's + offers. Terminal first: it is the one opened by reflex, and a
+  // manifest is written far less often than a command is run.
+  const newTabItems = [
+    {
+      id: 'terminal',
+      label: 'Terminal',
+      onSelect: () =>
+        setDock((current) =>
+          openTab(current.tabs, {
+            kind: 'terminal',
+            clusterId: cluster.id,
+            typeKey: '',
+            namespace: '',
+            name: cluster.name,
+          }),
+        ),
+    },
+    {
+      id: 'create',
+      label: 'Create Resource',
+      onSelect: () => setDock((current) => openCreateTab(current, cluster.id, location.typeKey)),
+    },
+  ]
 
   const openDelete = (rows: ResourceRow[]) => {
     if (rows.length === 0) return
     setDeleting({ clusterId: cluster.id, typeKey: location.typeKey, kind, rows })
   }
 
-  const openDock = (kind: 'logs' | 'describe', row: ResourceRow) =>
+  const openDock = (kind: 'logs' | 'describe' | 'shell' | 'node-shell', row: ResourceRow) =>
     setDock((current) =>
       openTab(current.tabs, {
         kind,
@@ -259,7 +312,10 @@ export function ResourceExplorer({
         </div>
       </ResizablePanel>
 
-      <main className="flex min-w-0 flex-1">
+      {/* A column rather than a row: the status strip belongs under this side of the
+          split, so the rail beside it runs the full height of the window. */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <main className="flex min-h-0 min-w-0 flex-1">
         {namespacesError ? (
           <div className="p-4">
             <Callout tone="error" title="Could not read from this cluster" requestId={namespacesError.requestId}>
@@ -277,6 +333,10 @@ export function ResourceExplorer({
               namespaces={location.namespaces}
               onOpenType={(typeKey) => onNavigate({ typeKey, objectName: null, objectNamespace: '' })}
             />
+          </div>
+        ) : location.typeKey === 'applications' ? (
+          <div className="min-w-0 flex-1">
+            <HelmReleases clusterId={cluster.id} namespaces={location.namespaces} />
           </div>
         ) : location.typeKey === 'health' ? (
           <div className="min-w-0 flex-1">
@@ -360,6 +420,7 @@ export function ResourceExplorer({
                   setDock((current) => closeTab(current.tabs, id, current.activeId))
                 }
                 onClose={() => setDock({ tabs: [], activeId: '' })}
+                newTabItems={newTabItems}
                 tabs={dock.tabs.map((tab) => ({
                   id: tab.id,
                   label: tabLabel(tab),
@@ -367,6 +428,43 @@ export function ResourceExplorer({
                   render: () => {
                     if (tab.kind === 'logs') {
                       return <LogPane clusterId={tab.clusterId} namespace={tab.namespace} pod={tab.name} />
+                    }
+                    if (tab.kind === 'terminal') {
+                      return <ClusterTerminalPane clusterId={tab.clusterId} clusterName={tab.name} />
+                    }
+                    if (tab.kind === 'shell') {
+                      return (
+                        <ShellPane clusterId={tab.clusterId} namespace={tab.namespace} pod={tab.name} />
+                      )
+                    }
+                    if (tab.kind === 'node-shell') {
+                      return (
+                        <TerminalPane
+                          path={nodeShellPath(tab.clusterId, tab.name)}
+                          opening={`Starting a privileged pod on ${tab.name}…`}
+                        />
+                      )
+                    }
+                    if (tab.kind === 'forward') {
+                      const forward = forwards.get(tab.id)
+                      if (!forward) {
+                        return (
+                          <div
+                            className="flex h-full items-center justify-center"
+                            style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
+                          >
+                            This tunnel is closed.
+                          </div>
+                        )
+                      }
+                      return (
+                        <ForwardPane
+                          forward={forward}
+                          onClosed={() =>
+                            setDock((current) => closeTab(current.tabs, tab.id, current.activeId))
+                          }
+                        />
+                      )
                     }
                     if (tab.kind === 'create' || tab.kind === 'edit') {
                       return (
@@ -402,7 +500,10 @@ export function ResourceExplorer({
         ) : (
           <EmptyState title="Pick a resource kind" description="Choose a kind from the panel to browse it." />
         )}
-      </main>
+        </main>
+
+        {footer?.(<DockLauncher items={newTabItems} />)}
+      </div>
 
       {deleting && (
         <DeleteDialog
@@ -423,6 +524,27 @@ export function ResourceExplorer({
           row={scaling}
           onChanged={watchForChanges}
           onClose={() => setScaling(null)}
+        />
+      )}
+
+      {forwarding && (
+        <PortForwardDialog
+          clusterId={cluster.id}
+          typeKey={location.typeKey}
+          kind={kind}
+          row={forwarding}
+          onOpened={(forward) => {
+            const tab = {
+              kind: 'forward' as const,
+              clusterId: cluster.id,
+              typeKey: location.typeKey,
+              namespace: forward.namespace,
+              name: `${forward.name}:${forward.port}`,
+            }
+            setForwards((current) => new Map(current).set(tabId(tab), forward))
+            setDock((current) => openTab(current.tabs, tab))
+          }}
+          onClose={() => setForwarding(null)}
         />
       )}
 

@@ -295,3 +295,35 @@ func (r *UserRepo) DisableTOTP(ctx context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
+
+// RestoredUser is an account being brought back from an archive, with the identity it
+// had before rather than a new one: the grants in the same archive refer to it by id.
+type RestoredUser struct {
+	ID           uuid.UUID
+	Email        string
+	DisplayName  string
+	PasswordHash string
+	Role         rbac.Role
+	IsActive     bool
+}
+
+// RestoreUser writes an account back with its original id.
+//
+// Separate from Create because it is a different act: Create mints an identity, this one
+// preserves one. Keeping them apart means the ordinary path cannot be handed an id by
+// accident, which is how a caller ends up choosing user ids.
+//
+// Nothing is overwritten: a conflicting id or email leaves what is there alone, so a
+// restore run against a live installation by mistake is a no-op rather than the last
+// thing that happens to it.
+func (r *UserRepo) RestoreUser(ctx context.Context, in RestoredUser) error {
+	_, err := r.db.pool.Exec(ctx, `
+		INSERT INTO users (id, email, display_name, password_hash, role, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT DO NOTHING`,
+		in.ID, in.Email, in.DisplayName, in.PasswordHash, string(in.Role), in.IsActive)
+	if err != nil {
+		return fmt.Errorf("restore user: %w", err)
+	}
+	return nil
+}

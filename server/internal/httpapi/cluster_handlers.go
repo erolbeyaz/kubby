@@ -46,6 +46,11 @@ type clusterResponse struct {
 	QPSLimit              int    `json:"qpsLimit"`
 	LastValidatedAt       string `json:"lastValidatedAt,omitempty"`
 	AccessLevel           string `json:"accessLevel,omitempty"`
+	// The metrics endpoint, so the reader can see and change where the history comes
+	// from. Whether a password is stored is configuration; the password is not.
+	MetricsURL                string `json:"metricsUrl,omitempty"`
+	MetricsUsername           string `json:"metricsUsername,omitempty"`
+	MetricsInsecureSkipVerify bool   `json:"metricsInsecureSkipVerify"`
 }
 
 func clusterResponseFrom(c *store.Cluster, accessLevel string) clusterResponse {
@@ -68,6 +73,10 @@ func clusterResponseFrom(c *store.Cluster, accessLevel string) clusterResponse {
 		ImpersonationEnabled:  c.ImpersonationEnabled,
 		QPSLimit:              c.QPSLimit,
 		AccessLevel:           accessLevel,
+
+		MetricsURL:                c.MetricsURL,
+		MetricsUsername:           c.MetricsUsername,
+		MetricsInsecureSkipVerify: c.MetricsInsecureSkipVerify,
 	}
 	if c.LastValidatedAt != nil {
 		out.LastValidatedAt = c.LastValidatedAt.UTC().Format(time.RFC3339)
@@ -292,6 +301,15 @@ type updateClusterRequest struct {
 	ReadOnly             *bool   `json:"readOnly,omitempty"`
 	ImpersonationEnabled *bool   `json:"impersonationEnabled,omitempty"`
 	QPSLimit             *int    `json:"qpsLimit,omitempty"`
+	// Where this cluster's history is read from. Per cluster because Prometheus is
+	// normally deployed into the cluster it observes.
+	MetricsURL                *string `json:"metricsUrl,omitempty"`
+	MetricsUsername           *string `json:"metricsUsername,omitempty"`
+	MetricsInsecureSkipVerify *bool   `json:"metricsInsecureSkipVerify,omitempty"`
+	// MetricsPassword is write-only. Empty means "leave what is stored", not "remove it":
+	// a form saved without retyping a credential must not lose it.
+	MetricsPassword      string `json:"metricsPassword,omitempty"`
+	ClearMetricsPassword bool   `json:"clearMetricsPassword,omitempty"`
 }
 
 func (h *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
@@ -315,6 +333,8 @@ func (h *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name, Environment: req.Environment, EnvironmentLabel: req.EnvironmentLabel,
 		Color: req.Color, ReadOnly: req.ReadOnly,
 		ImpersonationEnabled: req.ImpersonationEnabled, QPSLimit: req.QPSLimit,
+		MetricsURL: req.MetricsURL, MetricsUsername: req.MetricsUsername,
+		MetricsInsecureSkipVerify: req.MetricsInsecureSkipVerify,
 	})
 	if errors.Is(err, store.ErrClusterNameInUse) {
 		writeError(w, r, http.StatusConflict, "a cluster with that name already exists")
@@ -323,6 +343,21 @@ func (h *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "could not update the cluster")
 		return
+	}
+
+	if req.MetricsPassword != "" || req.ClearMetricsPassword {
+		var sealed []byte
+		if !req.ClearMetricsPassword {
+			sealed, err = h.svc.SealMetricsPassword(c.ID.String(), req.MetricsPassword)
+			if err != nil {
+				writeError(w, r, http.StatusInternalServerError, "could not store the metrics password")
+				return
+			}
+		}
+		if err := h.clusters.SetMetricsPassword(r.Context(), c.ID, sealed); err != nil {
+			writeError(w, r, http.StatusInternalServerError, "could not store the metrics password")
+			return
+		}
 	}
 
 	if req.ReadOnly != nil {

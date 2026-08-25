@@ -30,7 +30,8 @@ const clusterColumns = `
 	id, name, environment, environment_label, color, auth_source, api_server_url,
 	insecure_skip_tls_verify, proxy_url, credential_status, status_detail, k8s_version,
 	node_count, metrics_available, last_validated_at, impersonation_enabled, qps_limit,
-	read_only, created_by, created_at, updated_at`
+	read_only, metrics_url, metrics_username, metrics_insecure_skip_verify,
+	created_by, created_at, updated_at`
 
 // Cluster is a registered Kubernetes cluster. The kubeconfig is deliberately absent:
 // it lives encrypted in cluster_credentials and is never carried on this struct.
@@ -53,9 +54,14 @@ type Cluster struct {
 	ImpersonationEnabled  bool
 	QPSLimit              int
 	ReadOnly              bool
-	CreatedBy             *uuid.UUID
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	// MetricsURL is this cluster's Prometheus. Empty falls back to the deployment-wide
+	// setting, which is what a central Prometheus or Thanos looks like.
+	MetricsURL                string
+	MetricsUsername           string
+	MetricsInsecureSkipVerify bool
+	CreatedBy                 *uuid.UUID
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 // DisplayEnvironment is what the UI shows: the free-text label when set, else the code.
@@ -108,6 +114,15 @@ func (r *ClusterRepo) CreateWithID(ctx context.Context, id uuid.UUID, in NewClus
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// The zero uuid means "no creator on record", which is a real state — a cluster
+	// brought back from an archive has one. Sent as-is it is a valid uuid that matches no
+	// user and the row is refused by the foreign key.
+	var createdBy *uuid.UUID
+	if in.CreatedBy != uuid.Nil {
+		creator := in.CreatedBy
+		createdBy = &creator
+	}
+
 	row := tx.QueryRow(ctx, `
 		INSERT INTO clusters
 			(id, name, environment, environment_label, color, auth_source, api_server_url,
@@ -115,7 +130,7 @@ func (r *ClusterRepo) CreateWithID(ctx context.Context, id uuid.UUID, in NewClus
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING `+clusterColumns,
 		id, strings.TrimSpace(in.Name), in.Environment, in.EnvironmentLabel, in.Color,
-		in.AuthSource, in.APIServerURL, in.InsecureSkipTLSVerify, in.ProxyURL, in.CreatedBy)
+		in.AuthSource, in.APIServerURL, in.InsecureSkipTLSVerify, in.ProxyURL, createdBy)
 
 	cluster, err := scanCluster(row)
 	if isUniqueViolation(err) {
@@ -320,6 +335,10 @@ type ClusterSettings struct {
 	ImpersonationEnabled *bool
 	QPSLimit             *int
 	ProxyURL             *string
+	// MetricsURL and friends point this cluster at its own Prometheus.
+	MetricsURL                *string
+	MetricsUsername           *string
+	MetricsInsecureSkipVerify *bool
 }
 
 func (r *ClusterRepo) UpdateSettings(ctx context.Context, id uuid.UUID, s ClusterSettings) error {
@@ -333,10 +352,14 @@ func (r *ClusterRepo) UpdateSettings(ctx context.Context, id uuid.UUID, s Cluste
 			impersonation_enabled = COALESCE($7, impersonation_enabled),
 			qps_limit = COALESCE($8, qps_limit),
 			proxy_url = COALESCE($9, proxy_url),
+			metrics_url = COALESCE($10, metrics_url),
+			metrics_username = COALESCE($11, metrics_username),
+			metrics_insecure_skip_verify = COALESCE($12, metrics_insecure_skip_verify),
 			updated_at = now()
 		WHERE id = $1`,
 		id, s.Name, s.Environment, s.EnvironmentLabel, s.Color, s.ReadOnly,
-		s.ImpersonationEnabled, s.QPSLimit, s.ProxyURL)
+		s.ImpersonationEnabled, s.QPSLimit, s.ProxyURL,
+		s.MetricsURL, s.MetricsUsername, s.MetricsInsecureSkipVerify)
 	if isUniqueViolation(err) {
 		return ErrClusterNameInUse
 	}
@@ -378,10 +401,39 @@ func scanCluster(row scannable) (*Cluster, error) {
 		&c.APIServerURL, &c.InsecureSkipTLSVerify, &c.ProxyURL, &c.CredentialStatus,
 		&c.StatusDetail, &c.K8sVersion, &c.NodeCount, &c.MetricsAvailable,
 		&c.LastValidatedAt, &c.ImpersonationEnabled, &c.QPSLimit, &c.ReadOnly,
+		&c.MetricsURL, &c.MetricsUsername, &c.MetricsInsecureSkipVerify,
 		&c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// MetricsPassword returns the sealed basic-auth password for this cluster's metrics
+// endpoint. Nil means none is stored, which is the common case.
+func (r *ClusterRepo) MetricsPassword(ctx context.Context, clusterID uuid.UUID) ([]byte, error) {
+	var enc []byte
+	err := r.db.pool.QueryRow(ctx,
+		`SELECT metrics_password_enc FROM cluster_credentials WHERE cluster_id = $1`,
+		clusterID).Scan(&enc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read metrics password: %w", err)
+	}
+	return enc, nil
+}
+
+// SetMetricsPassword stores or clears it. The value arrives already sealed: this layer
+// never sees a credential in the clear.
+func (r *ClusterRepo) SetMetricsPassword(ctx context.Context, clusterID uuid.UUID, enc []byte) error {
+	_, err := r.db.pool.Exec(ctx,
+		`UPDATE cluster_credentials SET metrics_password_enc = $2 WHERE cluster_id = $1`,
+		clusterID, enc)
+	if err != nil {
+		return fmt.Errorf("store metrics password: %w", err)
+	}
+	return nil
 }

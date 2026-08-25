@@ -3,9 +3,11 @@
 package httpapi
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -16,6 +18,7 @@ import (
 	"github.com/erolbeyaz/kubby/internal/config"
 	"github.com/erolbeyaz/kubby/internal/crypto"
 	"github.com/erolbeyaz/kubby/internal/health"
+	"github.com/erolbeyaz/kubby/internal/metrics"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/settings"
 	"github.com/erolbeyaz/kubby/internal/store"
@@ -30,9 +33,15 @@ type Deps struct {
 	Auth    *auth.Service
 	Cluster *cluster.Service
 	Audit   *audit.Emitter
+	// AuditShipper copies the audit trail to a SIEM. Optional: with none configured the
+	// database and the log stream are still the audit trail.
+	AuditShipper *audit.ShipperManager
 	// Keyring seals the credentials settings carry, with the same key as cluster
 	// credentials so there is one key to rotate rather than two.
 	Keyring *crypto.Keyring
+	// Metrics is Kubby's own instrumentation. Optional: with none, /metrics answers 404
+	// and nothing is recorded.
+	Metrics *metrics.Registry
 	WebFS   fs.FS
 }
 
@@ -40,6 +49,7 @@ type Deps struct {
 type Server struct {
 	Handler  http.Handler
 	limiters []*rateLimiter
+	shipper  *audit.ShipperManager
 }
 
 // Close stops the rate limiter sweepers.
@@ -47,11 +57,38 @@ func (s *Server) Close() {
 	for _, rl := range s.limiters {
 		rl.close()
 	}
+	if s.shipper != nil {
+		// Bounded: what is queued belongs at the sink, but shutdown must not hang on a
+		// destination that has stopped answering.
+		drain, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = s.shipper.Close(drain)
+	}
+}
+
+// schemaReaderOf converts an absent store into an absent interface.
+//
+// A typed nil placed in an interface is not nil: `d.Store` may be a nil *store.DB, and
+// assigning it directly would leave the handler's `schema != nil` check passing and its
+// first call dereferencing nothing.
+func schemaReaderOf(db *store.DB) SchemaReader {
+	if db == nil {
+		return nil
+	}
+	return db
 }
 
 // New builds the fully configured server.
 func New(d Deps) *Server {
 	secure := d.Config.HTTP.SecureCookies()
+
+	// Built here rather than only by the process that starts the server, for the same
+	// reason the audit shipper is: wiring it in one call site meant /metrics was absent
+	// from every test that built a router, so nothing checked that it stays private or
+	// that its labels stay bounded.
+	if d.Metrics == nil {
+		d.Metrics = metrics.New()
+	}
 
 	loginLimit := newRateLimiter(d.Config.Auth.LoginRatePerMinute, d.Config.Auth.LoginRateBurst)
 	apiLimit := newRateLimiter(d.Config.Auth.APIRatePerMinute, d.Config.Auth.APIRateBurst)
@@ -65,6 +102,7 @@ func New(d Deps) *Server {
 		secure:     secure,
 		refreshTTL: d.Config.Auth.RefreshTTL,
 		loginLimit: loginLimit,
+		metrics:    d.Metrics,
 	}
 	clusterAPI := &clusterHandlers{
 		svc:      d.Cluster,
@@ -72,6 +110,85 @@ func New(d Deps) *Server {
 		users:    d.Store.Users(),
 		audit:    d.Audit,
 	}
+	settingsService := settings.New(d.Store.Settings(), d.Keyring)
+
+	// The audit shipper is built here rather than only by the process that starts the
+	// server, so it exists wherever the router does. Wiring it in one call site meant the
+	// feature was absent from every test that built a router, which is exactly where a
+	// missing copy of the audit trail would go unnoticed.
+	shipper := d.AuditShipper
+	if shipper == nil {
+		shipper = audit.NewShipperManager(d.Logger)
+	}
+	d.Audit.WithShipper(shipper)
+
+	if d.Metrics != nil {
+		// The one that matters is the drop count: audit records not reaching the SIEM is
+		// a compliance failure nothing else in the system notices, because Kubby carries
+		// on working perfectly while it happens.
+		if err := d.Metrics.RegisterAuditShipper(func() (string, int, uint64, uint64, uint64, uint64, bool) {
+			stats, running := shipper.Stats()
+			return stats.Sink, stats.Queued, stats.Sent, stats.Failed, stats.Dropped, stats.Retries, running
+		}); err != nil {
+			d.Logger.Warn("audit shipping metrics could not be registered",
+				slog.String("error", err.Error()))
+		}
+	}
+
+	// Applied in the background rather than while the router is being built.
+	//
+	// Building a router must not touch the database: /healthz answers whether the process
+	// is alive, deliberately without asking Postgres anything, and reading a setting here
+	// made even constructing the server depend on the database being up.
+	go func() {
+		// A background task must not be able to take the process down. Handlers have
+		// recoverPanic for the same reason; a goroutine started here has nothing above it
+		// to catch a panic, so a bad store or a surprise nil would kill Kubby outright
+		// rather than lose one optional copy of the audit trail.
+		defer func() {
+			if rec := recover(); rec != nil {
+				d.Logger.Error("audit shipping setup panicked", slog.Any("panic", rec))
+			}
+		}()
+
+		startup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		enabled, sinkCfg, err := settingsService.AuditSinkConfig(startup)
+		if err != nil {
+			d.Logger.Warn("could not read the audit shipping setting",
+				slog.String("error", err.Error()))
+			return
+		}
+		if err := shipper.Apply(startup, enabled, sinkCfg); err != nil {
+			// Not fatal: the database and the log stream are the audit trail, and
+			// refusing to serve would turn a misconfigured copy into an outage.
+			d.Logger.Error("audit shipping is configured but could not start",
+				slog.String("error", err.Error()))
+		}
+	}()
+
+	// A cluster that names no Prometheus of its own falls back to the deployment's, which
+	// is what a central Prometheus or Thanos looks like. Read per request rather than
+	// captured, so an admin's change takes effect without a restart.
+	d.Cluster.WithMetricsDefaults(func(ctx context.Context) (cluster.MetricsDefaults, error) {
+		all, err := settingsService.All(ctx)
+		if err != nil {
+			return cluster.MetricsDefaults{}, err
+		}
+		password, _, err := settingsService.Secret(ctx, settings.SecretMetricsPassword)
+		if err != nil {
+			return cluster.MetricsDefaults{}, err
+		}
+		return cluster.MetricsDefaults{
+			Enabled:            all.Metrics.Enabled,
+			URL:                all.Metrics.URL,
+			Username:           all.Metrics.Username,
+			Password:           password,
+			InsecureSkipVerify: all.Metrics.InsecureSkipVerify,
+		}, nil
+	})
+
 	resourceAPI := &resourceHandlers{
 		svc:            d.Cluster,
 		clusters:       d.Store.Clusters(),
@@ -81,11 +198,10 @@ func New(d Deps) *Server {
 		eventWindow:    defaultEventWindow,
 		allowedOrigins: originHosts(d.Config.HTTP.PublicURL, d.Config.HTTP.AllowedOrigins),
 		readOnly:       d.Config.HTTP.ReadOnly,
+		settings:       settingsService,
+		forwards:       newForwardRegistry(),
 	}
-	settingsAPI := &settingsHandlers{
-		svc:   settings.New(d.Store.Settings(), d.Keyring),
-		audit: d.Audit,
-	}
+	settingsAPI := &settingsHandlers{svc: settingsService, audit: d.Audit, shipper: shipper}
 	userAPI := &userHandlers{
 		users:     d.Store.Users(),
 		sessions:  d.Store.Sessions(),
@@ -101,12 +217,21 @@ func New(d Deps) *Server {
 	r.Use(recoverPanic(d.Logger))
 	r.Use(securityHeaders(secure))
 	r.Use(accessLog(d.Logger))
+	r.Use(observe(d.Metrics))
 	r.Use(realIP(d.Config.HTTP.TrustedProxies, d.Logger))
 	r.Use(middleware.Compress(5))
 
 	r.Get("/healthz", handleLive())
-	r.Get("/readyz", handleReady(d.DB))
+	r.Get("/readyz", handleReady(d.DB, schemaReaderOf(d.Store)))
 	r.Get("/version", handleVersion())
+
+	// Kubby's own metrics. Never unauthenticated: a scraper presents the configured
+	// token, a person presents a session with audit.read.
+	r.Get("/metrics", guardMetrics(
+		d.Config.HTTP.MetricsToken,
+		metricsHandler(d.Metrics),
+		requireAuth(d.Auth)(requirePermission(rbac.PermAuditRead)(metricsHandler(d.Metrics))),
+	))
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(rateLimit(apiLimit))
@@ -162,17 +287,23 @@ func New(d Deps) *Server {
 				// The type key carries a slash for grouped kinds ("apps/deployments"),
 				// so these are wildcard routes rather than path parameters.
 				cl.Get("/clusters/{id}/resources/*", resourceAPI.list)
+				cl.Get("/clusters/{id}/stream/*", resourceAPI.streamResources)
 				cl.Get("/clusters/{id}/object/*", resourceAPI.get)
 				cl.Get("/clusters/{id}/health", resourceAPI.clusterHealth)
+				cl.Get("/clusters/{id}/helm-releases", resourceAPI.listHelmReleases)
+				cl.Get("/clusters/{id}/helm-releases/{namespace}/{name}", resourceAPI.helmRelease)
+				cl.Get("/clusters/{id}/metrics", resourceAPI.clusterMetrics)
 				cl.Get("/clusters/{id}/secret/{namespace}/{name}/keys", resourceAPI.secretKeys)
 				// Disclosure is its own route so it is its own audit record; listing a
 				// secret's keys is not the same act as reading one of its values.
 				cl.Get("/clusters/{id}/secret/{namespace}/{name}/reveal", resourceAPI.revealSecret)
 				cl.Get("/fleet/health", resourceAPI.fleetHealth)
+				cl.Get("/search", resourceAPI.search)
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/containers", resourceAPI.podContainers)
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/restarts", resourceAPI.podRestarts)
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/logs", resourceAPI.podLogs)
 				cl.Get("/clusters/{id}/describe/*", resourceAPI.describe)
+				cl.Get("/clusters/{id}/relations/*", resourceAPI.relations)
 				cl.Get("/clusters/{id}/rollout/{namespace}/{name}", resourceAPI.rolloutHistory)
 				cl.Get("/clusters/{id}/drain-plan/{name}", resourceAPI.planDrain)
 			})
@@ -192,6 +323,23 @@ func New(d Deps) *Server {
 				cl.Post("/clusters/{id}/node/cordon", resourceAPI.cordonNode)
 				cl.Post("/clusters/{id}/node/drain", resourceAPI.drainNode)
 				cl.Post("/clusters/{id}/rollback", resourceAPI.rollback)
+
+				// Interactive sessions. A shell is a write to the cluster in every sense
+				// that matters, so it sits behind the same gate as one.
+				cl.Get("/clusters/{id}/pod/{namespace}/{name}/shell", resourceAPI.podShell)
+				cl.Get("/clusters/{id}/pod/{namespace}/{name}/debug", resourceAPI.debugShell)
+				cl.Get("/clusters/{id}/node/{name}/shell", resourceAPI.nodeShell)
+				cl.Get("/clusters/{id}/terminal", resourceAPI.clusterTerminal)
+				cl.Get("/clusters/{id}/forward/{namespace}/{name}", resourceAPI.portForward)
+
+				// A forward the browser can actually use: Kubby holds the tunnel and
+				// serves the pod's own pages under a path of its own.
+				cl.Get("/clusters/{id}/ports/{namespace}/{name}", resourceAPI.listPorts)
+				cl.Get("/clusters/{id}/forwards", resourceAPI.listForwards)
+				cl.Post("/clusters/{id}/forwards", resourceAPI.startForward)
+				cl.Delete("/forwards/{forwardId}", resourceAPI.stopForward)
+				cl.Handle("/forward/{forwardId}/*", http.HandlerFunc(resourceAPI.serveForward))
+				cl.Handle("/forward/{forwardId}", http.HandlerFunc(resourceAPI.serveForward))
 			})
 
 			authed.With(requirePermission(rbac.PermClusterManage)).Group(func(cl chi.Router) {
@@ -217,6 +365,7 @@ func New(d Deps) *Server {
 			authed.With(requirePermission(rbac.PermSettingsWrite)).Group(func(st chi.Router) {
 				st.Get("/settings", settingsAPI.read)
 				st.Put("/settings/node-shell", settingsAPI.saveNodeShell)
+				st.Put("/settings/pod-debug", settingsAPI.savePodDebug)
 				st.Put("/settings/metrics", settingsAPI.saveMetrics)
 				st.Put("/settings/audit-sink", settingsAPI.saveAuditSink)
 			})
@@ -225,5 +374,5 @@ func New(d Deps) *Server {
 
 	mountSPA(r, d.WebFS, d.Logger)
 
-	return &Server{Handler: r, limiters: []*rateLimiter{loginLimit, apiLimit}}
+	return &Server{Handler: r, limiters: []*rateLimiter{loginLimit, apiLimit}, shipper: shipper}
 }

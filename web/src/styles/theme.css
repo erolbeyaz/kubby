@@ -8,7 +8,16 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  /*
+   * Ordered by what is actually installed, not by preference.
+   *
+   * The old stack named four fonts no stock Windows has, so it fell through to the
+   * generic `monospace` — which is Courier New, and looks it. Cascadia and Consolas ship
+   * with Windows, SF Mono and Menlo with macOS, DejaVu and Liberation with most Linux
+   * desktops, so every platform now lands on a real terminal face.
+   */
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, "Cascadia Mono",
+    "Cascadia Code", Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
 
   /*
    * One type scale for the whole app. Density still matters — this is a tool for
@@ -154,14 +163,15 @@
   .kbd {
     display: inline-flex;
     align-items: center;
-    height: 1.25rem;
-    padding: 0 0.3rem;
+    /* Sized against the status strip it mostly appears in, which is 40px tall. */
+    height: 1.4rem;
+    padding: 0 0.4rem;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sharp);
     background-color: var(--bg-raised);
     color: var(--text-secondary);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
   }
 
@@ -304,7 +314,8 @@
    * filtered down rather than swapped for a second file: one asset, two grounds.
    */
   .signature {
-    height: 1.15rem;
+    /* Grown with the strip: at 1.15rem it sat lost in a 40px row that had been 28px. */
+    height: 1.4rem;
     width: auto;
     /* The artwork's ink is a pale blue-grey; on the dark strip it is pushed to white so
        it reads as a signature rather than as a smudge. */

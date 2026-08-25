@@ -1,130 +1,328 @@
 # Kubby
 
-Tarayıcı üzerinden çalışan, çok-cluster **Kubernetes yönetim ve gözlem arayüzü** —
-Lens/Rancher muadili, kendi altyapında çalışan bir internal tool.
+A browser-based, multi-cluster **Kubernetes management and observation UI** — a Lens or
+Rancher equivalent that runs on your own infrastructure.
 
-Çözdüğü problem: birden fazla cluster'ı (prod / preprod / test / fkm) yönetirken masaüstü
-Lens kurulumuna, dağınık kubeconfig dosyalarına ve sürekli terminal açmaya bağımlı kalmak.
-Kubby bunu tek bir merkezi web arayüzüne taşır.
+Kubby replaces a desktop Lens install, a folder of scattered kubeconfigs and a terminal
+that is always open, with one address your team opens in a browser. It is built for a
+small platform team operating several clusters (prod / preprod / test), on an internal
+network.
 
-> **Durum: tasarım aşaması.** Henüz kod yazılmadı. Faz planı `docs/ROADMAP.md`'de ve
-> kullanıcı onayı bekliyor. Aşağıdaki kurulum bölümü Faz 1'de doldurulacaktır.
+[![CI](https://github.com/erolbeyaz/kubby/actions/workflows/ci.yml/badge.svg)](https://github.com/erolbeyaz/kubby/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+> **Status: 0.9.0, first packaged release.** It runs, it is tested and it is deployable by
+> Helm or Compose. Read the **[residual risks](docs/SECURITY.md#kalan-riskler)** before you
+> point it at a production cluster.
+
+<!-- Screenshots: drop PNGs into docs/images/ and uncomment.
+![Health panel](docs/images/health.png)
+![Workloads](docs/images/workloads.png)
+![Cluster terminal](docs/images/terminal.png)
+-->
 
 ---
 
-## Ne yapar
+## What it does
 
-- **Sağlık paneli** — açılışta cluster'daki bozuk olan her şey tek ekranda:
-  CrashLoopBackOff, ImagePullBackOff, OOMKilled, Pending pod'lar, NotReady node'lar,
-  Failed job'lar, Bound olmayan PVC'ler, Warning event'ler, süresi yaklaşan sertifikalar
-- **Sorun tespiti** — pod satırında tek tıkla log ve describe; restart sebebi (exitCode,
-  OOMKilled, Error) pod'un içine girmeden listede rozet olarak görünür
-- **Tam kaynak gözlemi** — Workload, Config, Network (Gateway API dahil), Storage,
-  Access Control, CRD'ler için jenerik görüntüleyici
-- **Obje işlemleri** — YAML düzenleme (server-side dry-run + diff), scale, rollout
-  restart/rollback, delete, node cordon/drain
-- **Terminal** — pod exec, kubectl web terminali, port-forward
-- **Denetim** — her yıkıcı işlem audit log'a: kim, ne zaman, hangi cluster, ne yaptı
+**Finding what is broken is the point.** The health panel is the front page: everything
+wrong in a cluster on one screen, with the reason, before anyone opens a pod.
 
-## Güvenlik
+- **Health panel** — CrashLoopBackOff, ImagePullBackOff, OOMKilled, Pending pods, NotReady
+  nodes, failed Jobs, unbound PVCs, warning events, expiring certificates. Restart reasons
+  (`exitCode`, `OOMKilled`, `Error`) appear as badges in the list, not three clicks away
+- **Full resource browsing** — workloads, config, network (Gateway API included), storage,
+  access control and CRDs, through one generic viewer with server-side projection
+- **Writes** — YAML editing with server-side dry-run and diff, scale, rollout restart and
+  rollback, delete, evict, cordon/drain, CronJob trigger and suspend. Every write path is
+  aware of ArgoCD ownership and says so before it fights your GitOps controller
+- **Live updates** — resource lists stream over SSE; a two-way ownership graph walks from
+  a Deployment down to its pods and back up from a pod to what created it
+- **Terminals** — pod exec, an ephemeral debug container, an optional node shell, and a
+  **cluster terminal** locked to `kubectl` and `helm` that you can drag files onto
+- **Port-forward** from the browser, with the forwarded page isolated in an opaque origin
+- **Logs** with search and container selection, aware of sidecars
+- **Prometheus** — per-cluster connection and a cluster dashboard
+- **Global search** — Ctrl+K across the whole fleet; an unreachable cluster is reported
+  **by name** rather than silently returning nothing
+- **Helm** release view, values and revision history
+- **Audit** — who, when, which cluster, what. It cannot be turned off
 
-Kubby cluster'lara yüksek yetkiyle erişir; güvenlik tasarımın temel şartıdır:
-kubeconfig'ler AES-256-GCM ile at-rest şifreli, argon2id + TOTP 2FA, sunucu tarafında
-zorunlu yetki kontrolü, opsiyonel Kubernetes RBAC impersonation, kapatılamaz audit akışı,
-distroless non-root imaj. Ayrıntı: [`docs/SECURITY.md`](docs/SECURITY.md).
+## Security in one paragraph
 
-## Teknoloji Yığını
+Kubby holds credentials with **full access to every cluster you register**, so the design
+starts there. Kubeconfigs are sealed with envelope encryption (AES-256-GCM, per-row AAD)
+and never travel back to the browser. Authentication is argon2id plus TOTP with
+progressive lockout. Every write passes four server-side gates — a deployment-wide kill
+switch, role, per-cluster grant, per-cluster read-only lock — and then the cluster's own
+`SelfSubjectAccessReview`. The image is distroless, non-root, shell-less and runs on a
+read-only root filesystem. CI fails the build on `trivy`, `semgrep`, `gitleaks`,
+`npm audit` or `govulncheck` findings.
 
-| Katman | Seçim |
-|---|---|
-| Backend | Go 1.27.0 + client-go v0.36.4 + chi |
-| Frontend | React 19.2.8 + TypeScript 7.0.2 + Vite 8.2.2 + Tailwind 4.3.3 |
-| Veritabanı | PostgreSQL 18.6 (pgx v5 + goose) |
-| Terminal / Editör | xterm.js 6.0.0 · Monaco 0.56.0 |
-| Dağıtım | Tek distroless imaj · Helm chart |
+What it does **not** protect against is written down just as plainly:
+**[docs/SECURITY.md](docs/SECURITY.md)**.
 
-Gerekçeler: [`docs/DECISIONS.md`](docs/DECISIONS.md).
+---
 
-## Kurulum
+## Installing
 
-`TODO:` Faz 1'de doldurulacak.
+There is **no published image**. Kubby is a tool that holds cluster credentials, so you
+build it and push it to a registry you control. Both install paths below start there.
 
-**Ön koşullar:** Docker + Docker Compose, Go 1.27, Node 24.19 LTS.
-
-```bash
-cp .env.example .env      # doldur — .env asla commit edilmez
-make gen-key              # KUBBY_ENCRYPTION_KEY uretir, ciktiyi .env'e yaz
-git config core.hooksPath .githooks   # gitleaks pre-commit hook'unu etkinlestir
-make setup                # Go/Node bagimliliklari + air, goose, golangci-lint
-make dev                  # http://localhost:5173
-```
-
-`make dev` Postgres'i baslatir, API'yi hot-reload ile calistirir ve Vite dev sunucusunu
-acar. Eksik bir arac veya `.env` degeri varsa `make dev` **baslamadan once** net bir
-hata verir (`make check-tools`).
-
-WSL2 kullaniyorsan ve Windows tarayicisindan `localhost:5173` acilmazsa, `make dev`
-ciktisindaki WSL IP adresini kullan (ornegin `http://172.24.29.86:5173`).
-
-İlk açılışta kurulum sihirbazı ilk admin hesabını oluşturur. Başka kayıt yolu yoktur.
-
-> `KUBBY_ENCRYPTION_KEY` boş, kısa veya örnek değerdeyse uygulama **açılmaz**.
-> Bu anahtar kaybolursa kayıtlı kubeconfig'ler geri getirilemez.
-
-### Kendi registry'n ile build
-
-Varsayılanlar upstream'e (`docker.io`, `gcr.io`) bakar — repoyu klonlayan herkes ek
-yapılandırma olmadan build edebilir. Kendi mirror'ını veya özel registry'ni kullanmak
-için (ADR-027):
+### Build and push the image
 
 ```bash
-# Varsayilan: docker.io/kubby:<surum> ve :<git-sha>
-make docker VERSION=0.1.0
+git clone https://github.com/erolbeyaz/kubby.git
+cd kubby
 
-# Kendi registry'n
-make docker VERSION=0.1.0 REGISTRY=my-registry.local IMAGE_REPO=team/kubby
-make docker-push VERSION=0.1.0 REGISTRY=my-registry.local IMAGE_REPO=team/kubby
-
-# Base image'lari da kendi mirror'indan cek
-docker build --build-arg REGISTRY=my-registry.local -t kubby:0.1.0 .
-
-# compose ayni degiskenleri kullanir
-REGISTRY=my-registry.local docker compose up -d
+make release VERSION=0.9.0 IMAGE_REGISTRY=registry.example.com/platform
 ```
 
-`:latest` etiketi üretilmez — hangi build'in çalıştığı her zaman belirli olmalıdır
-(`/version` ucu bunu döner). Registry kimlik bilgileri repoda tutulmaz; `docker login`
-veya CI'nın credential provider'ı kullanılır.
+`make release` verifies the image before it pushes: the expected `kubectl` and `helm`
+versions, uid 65532, and no shell. It deliberately never produces a `latest` tag — a
+`latest` cannot tell you what is running and makes rolling back impossible.
 
-### Özel/iç CA sertifikası
+### Option A — Docker Compose
 
-Cluster API'lerin veya log hedeflerin self-signed ya da iç bir PKI ile imzalıysa, CA
-bundle'ını mount edip `KUBBY_EXTRA_CA_BUNDLE` ile göster — sistem trust store'una
-**eklenir**, onu değiştirmez (ADR-020). Proxy arkasındaysan standart
-`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` değişkenleri desteklenir.
+Two containers, Kubby and its database. Nothing else: Elasticsearch, Loki and Prometheus
+are systems Kubby is *pointed at*, not things it ships.
 
-## Geliştirme kuralları
+```bash
+cd deploy/compose
+cp .env.example .env
+```
 
-- **Bağımlılık sürümleri sabittir** (ADR-025). `npm ci` kullanılır, `npm install` değil.
-  Renovate/Dependabot **yoktur**; yükseltmeler bilinçli ve sürüm notu okunarak yapılır.
-- **Sunucu UTC, arayüz Europe/Istanbul** (ADR-026). Testler `TZ=UTC` ile koşar.
-- **Secret taraması:** `git config core.hooksPath .githooks` ile pre-commit hook'u
-  etkinleştir. Aynı tarama CI'da da çalışır. `--no-verify` ile atlama.
-- Faz başına feature branch (`phase-1-skeleton`); merge kararı proje sahibinde.
-- Commit formatı ve branch stratejisi: [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md).
+Fill in the three values marked `REQUIRED`:
 
-## Dokümantasyon
+```bash
+KUBBY_IMAGE=registry.example.com/platform/kubby:0.9.0
+KUBBY_DB_PASSWORD=$(openssl rand -base64 24)
+KUBBY_ENCRYPTION_KEY=$(openssl rand -base64 32)
+```
 
-| Dosya | İçerik |
+```bash
+docker compose up -d
+docker compose logs -f kubby
+```
+
+Open <http://localhost:8080>.
+
+> **Keep a copy of `KUBBY_ENCRYPTION_KEY` outside Kubby.** Every stored kubeconfig is
+> sealed with it. Lose it and none of them can be opened again.
+
+### Option B — Helm
+
+The chart does **not** ship a database. Point it at a PostgreSQL 18 you already run.
+
+Create the secret yourself rather than letting the chart generate one — a chart-generated
+key lives in Helm's release history and `helm upgrade` will regenerate it, and a new key
+cannot open what the old one sealed:
+
+```bash
+kubectl create namespace kubby
+
+kubectl -n kubby create secret generic kubby \
+  --from-literal=encryption-key="$(openssl rand -base64 32)" \
+  --from-literal=db-password='<your database password>'
+```
+
+```bash
+helm install kubby ./deploy/helm/kubby \
+  --namespace kubby \
+  --set image.registry=registry.example.com/platform \
+  --set image.tag=0.9.0 \
+  --set secrets.existingSecret=kubby \
+  --set database.host=postgres.databases.svc.cluster.local \
+  --set config.publicUrl=https://kubby.example.com \
+  --set ingress.enabled=true \
+  --set ingress.host=kubby.example.com
+```
+
+The chart renders a least-privilege ClusterRole with no wildcards, a NetworkPolicy, a PDB
+and a locked-down `securityContext`. `values.yaml` documents every key.
+
+To let Kubby manage the cluster it runs in, using its own ServiceAccount:
+
+```bash
+--set inCluster.enabled=true --set inCluster.access=read
+```
+
+### First run
+
+Kubby **creates its own schema at startup** — there is no separate migration step, and
+upgrading is a tag change. The first browser visit asks you to create the first
+administrator; no account is seeded and no default password exists anywhere.
+
+Then: **Clusters → Add**, paste a kubeconfig. It must carry an embedded bearer token or a
+client certificate — **exec plugins are not supported** and never will be, because
+supporting them would mean running an arbitrary binary inside Kubby (ADR-017).
+
+Check it is healthy:
+
+```bash
+curl -fsS http://localhost:8080/healthz     # the process is up
+curl -fsS http://localhost:8080/readyz      # database reachable AND schema current
+```
+
+---
+
+## Configuration
+
+Everything is environment variables; `deploy/compose/.env.example` and
+`.env.example` document all of them, and `docs/ARCHITECTURE.md` explains each one.
+
+The ones that matter most:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `KUBBY_ENCRYPTION_KEY` | — | **Required.** base64, 32 bytes. Seals every stored credential |
+| `KUBBY_DB_PASSWORD` | — | **Required.** |
+| `KUBBY_PUBLIC_URL` | `http://localhost:8080` | The address the browser uses. Cookies, CSP and the WebSocket origin check depend on it |
+| `KUBBY_READ_ONLY` | `false` | Deployment-wide write lock. Stops everyone, administrators included |
+| `KUBBY_REQUIRE_2FA_FOR_ADMIN` | `true` | Force TOTP for administrators |
+| `KUBBY_TLS_CERT_FILE` / `_KEY_FILE` | — | Set both to terminate TLS in Kubby. Empty means plain HTTP behind a proxy |
+| `KUBBY_EXTRA_CA_BUNDLE` | — | Internal CA. **Added** to the system pool, never replacing it |
+| `KUBBY_TRUSTED_PROXIES` | — | CIDRs whose `X-Forwarded-For` is believed |
+| `KUBBY_METRICS_TOKEN` | — | Lets a scraper read `/metrics`. Empty means an admin session is required — never unauthenticated |
+| `KUBBY_ALLOW_LOOPBACK_CLUSTERS` | `false` | Needed for a local kind/k3d/minikube cluster |
+
+### Backups
+
+The encryption key is not enough on its own — you also need the rows it sealed:
+
+```bash
+export KUBBY_BACKUP_PASSPHRASE='...'            # the only thing protecting the archive
+
+make config-export OUT=kubby-2026-08-25.bak
+make config-restore IN=kubby-2026-08-25.bak DRY_RUN=1
+```
+
+The archive carries every cluster kubeconfig and is protected by that one passphrase
+(argon2id, deliberately heavier than the login hash). Store it away from Kubby. A restore
+is additive and never overwrites what is already there.
+
+---
+
+## Developing
+
+Contributions and forks are welcome. The project documentation in `docs/` is **written in
+Turkish**; all code, comments, identifiers, commit messages, API fields and UI text are
+**English**, and that split is intentional.
+
+### Prerequisites
+
+Go 1.27, Node.js 24 LTS, Docker, and `make`. Versions are pinned on purpose — see
+[ADR-025](docs/DECISIONS.md); please do not bump a dependency in a PR without raising it
+first.
+
+```bash
+git clone https://github.com/erolbeyaz/kubby.git
+cd kubby
+
+cp .env.example .env
+make setup        # go mod download, npm ci, and the pinned air/goose tools
+make gen-key      # prints a KUBBY_ENCRYPTION_KEY — paste it into .env
+                  # also set KUBBY_DB_PASSWORD in .env
+
+make dev          # Postgres in Docker + API with hot reload + Vite dev server
+```
+
+The UI comes up on <http://localhost:5173> and talks to the API on `:8080`.
+`make check-tools` tells you what is missing if `make dev` refuses to start.
+
+### Everyday commands
+
+```bash
+make test         # go test ./... (under TZ=UTC) + vitest
+make lint         # golangci-lint + eslint + tsc --noEmit
+make security     # trivy + semgrep + gitleaks + npm audit
+make build        # frontend bundle embedded into a single Go binary
+make dev-stop     # stop a stack started in another terminal
+make help         # everything else
+```
+
+Install the pre-commit hook once — it runs `gitleaks` before every commit, which matters
+in a repository whose whole subject is cluster credentials:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+### Layout
+
+```
+server/                     Go backend
+  cmd/kubby/                main, bootstrap, graceful shutdown
+  cmd/kubby-backup/         encrypted config export and restore
+  internal/
+    config/                 env -> typed config, validation
+    store/                  Postgres access (pgx), repositories
+    auth/                   argon2id, sessions, TOTP, RBAC decisions
+    audit/                  audit events and shipping to a SIEM
+    cluster/                encrypted kubeconfig storage, client factory, informers
+    k8s/                    resource reads and writes, describe, logs, exec, port-forward
+    kubectlsh/              the cluster terminal: argv splitting, the write gate
+    health/                 the health panel collector
+    promql/                 Prometheus reads
+    backup/                 the sealed archive format
+    httpapi/                chi router, handlers, middleware
+  migrations/               goose SQL, embedded and applied at startup
+
+web/src/                    React frontend
+  app/                      router, layout, providers, theme
+  features/<domain>/        component + hook + types together, feature-first
+  components/               shared primitives
+  lib/                      API client, SSE/WS clients, hooks
+
+deploy/helm/kubby/          Helm chart
+deploy/compose/             production Compose stack
+deploy/dev/                 local test clusters and their Prometheus values
+docs/                       see below
+```
+
+### Documentation map
+
+| File | What is in it |
 |---|---|
-| [`CLAUDE.md`](CLAUDE.md) | Proje kimliği, standartlar, çalışma yöntemi |
-| [`docs/STATE.md`](docs/STATE.md) | Canlı durum: nerede kaldık, açık sorular |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | 10 fazlık plan ve bitti-sayılma kriterleri |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Diyagram, veri modeli, API, ortam değişkenleri |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADR günlüğü — kararlar ve gerekçeleri |
-| [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) | Kod stili, test, commit, branch |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Tehdit modeli, önlemler, kalan riskler |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System and data model, API, environment variables |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The ADR log — **read this before proposing a redesign** |
+| [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) | Code style, tests, commits, branches |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, mitigations, residual risks |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phase plan and its completion criteria |
+| [`docs/STATE.md`](docs/STATE.md) | Where the work currently stands |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release history |
 
-## Lisans
+Most surprising-looking decisions have an ADR explaining them. If something reads as
+wrong, `docs/DECISIONS.md` probably says why it is that way — and if it does not, that is
+worth an issue.
 
-`TODO:` belirlenecek.
+### House rules for a pull request
+
+- `make test lint` is green
+- A destructive operation (delete, drain, scale) arrives with a test
+- No dependency version bumps without discussion (ADR-025)
+- Nothing raw from the Kubernetes API reaches the frontend; project it server-side
+- No secret, token, kubeconfig, password or `Authorization` header is ever logged
+- Authorization is enforced on the server, on every request — hiding a control in the UI
+  is decoration, not authorization
+
+---
+
+## Known limits
+
+- **Single replica by design** (ADR-016). Sessions and informer caches live in process memory
+- **No OIDC.** Identities are local accounts; the `AuthProvider` abstraction exists, an
+  implementation does not
+- **Logs are Pod-only**
+- The cluster terminal carries the cluster's credential — [SECURITY.md §1](docs/SECURITY.md)
+- The Helm chart was verified on minikube, not yet on an RKE2/Rancher-class cluster
+
+## Reporting a vulnerability
+
+Please **do not open a public issue** — a flaw in Kubby is a flaw in every cluster
+connected to it. Report it privately through
+[GitHub Security Advisories](https://github.com/erolbeyaz/kubby/security/advisories/new).
+
+## License
+
+[Apache License 2.0](LICENSE). Copyright 2026 Erol Beyaz.

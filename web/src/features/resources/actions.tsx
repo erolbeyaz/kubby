@@ -80,12 +80,19 @@ export const ACTIONS: ResourceAction[] = [
     shortcut: 'D',
     icon: glyph('M3.5 2.5h9v11h-9zM5.5 6h5M5.5 8.5h5M5.5 11h3'),
   },
-  { id: 'shell', label: 'Shell', kinds: ['Pod'], comingIn: 'phase 8', icon: glyph('M3 4l3.5 4L3 12M8.5 12h4.5') },
+  { id: 'shell', label: 'Shell', kinds: ['Pod'], shortcut: 'S', icon: glyph('M3 4l3.5 4L3 12M8.5 12h4.5') },
+  // Root on the machine, not in a container: a separate action so it can never be
+  // reached by aiming the ordinary one at a node (ADR-064).
+  {
+    id: 'node-shell',
+    label: 'Node shell',
+    kinds: ['Node'],
+    icon: glyph('M2 3.5h12v9H2zM4.5 6.5l2 1.5-2 1.5M8.5 9.5h3'),
+  },
   {
     id: 'forward',
     label: 'Port forward',
-    kinds: ['Service', 'Pod'],
-    comingIn: 'phase 8',
+    kinds: ['Service', 'Pod', 'Deployment', 'StatefulSet', 'DaemonSet'],
     icon: glyph('M2 8h8M7 5l3 3-3 3M12 3v10'),
   },
 

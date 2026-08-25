@@ -48,8 +48,20 @@ func newHarness(t *testing.T) *harness {
 	return newHarnessWithMFA(t, false)
 }
 
+// newHarnessReadOnly builds one with the deployment-wide write lock on, so the kill
+// switch can be tested as the thing it is rather than assumed.
+func newHarnessReadOnly(t *testing.T) *harness {
+	t.Helper()
+	return buildHarness(t, false, true)
+}
+
 // newHarnessWithMFA controls whether administrators must hold a second factor.
 func newHarnessWithMFA(t *testing.T, requireMFAForAdmin bool) *harness {
+	t.Helper()
+	return buildHarness(t, requireMFAForAdmin, false)
+}
+
+func buildHarness(t *testing.T, requireMFAForAdmin, readOnly bool) *harness {
 	t.Helper()
 
 	dsn := os.Getenv("KUBBY_TEST_DB_DSN")
@@ -77,6 +89,7 @@ func newHarnessWithMFA(t *testing.T, requireMFAForAdmin bool) *harness {
 	cfg.HTTP.PublicURL, _ = url.Parse("http://localhost")
 	alias, _ := url.Parse("https://kubby.alias.example.com")
 	cfg.HTTP.AllowedOrigins = []*url.URL{alias}
+	cfg.HTTP.ReadOnly = readOnly
 	cfg.Auth = config.AuthConfig{
 		SessionTTL: 900_000_000_000, RefreshTTL: 3_600_000_000_000,
 		Argon2MemoryMiB: 16, LoginMaxAttempts: 3,

@@ -1,0 +1,157 @@
+# Kubby — Helm values
+#
+# The two required settings are the image and the encryption key. Everything else has a
+# working default.
+
+image:
+  # Where the image is pulled from. Parameterised so a site that may only pull from its
+  # own registry changes one field (ADR-027).
+  registry: docker.io
+  repository: kubby
+  # Empty means the chart's appVersion. Pin a tag rather than tracking `latest`: `latest`
+  # cannot say which version is running and makes rolling back impossible.
+  tag: ""
+  pullPolicy: IfNotPresent
+  # Name of an existing pull secret. Kubby stores no registry credentials of its own.
+  pullSecrets: []
+
+replicaCount: 1
+
+# ---------------------------------------------------------------------------- config
+config:
+  # The address Kubby is reached at. Cookies, CSP and the WebSocket origin check all use
+  # it — wrong here and the terminal and log streams do not work.
+  publicUrl: "http://localhost:8080"
+  logLevel: info
+  # Deployment-wide write lock. On, nobody writes to any cluster — administrators
+  # included.
+  readOnly: false
+  # Trusted proxy ranges. Empty means X-Forwarded-For is not believed at all, which is
+  # better than letting a client name its own address (ADR-032).
+  trustedProxies: []
+  # Extra origins when Kubby answers on more than one hostname.
+  allowedOrigins: []
+  # What an authenticator app shows beside the code.
+  mfaIssuer: "Kubby - MFA"
+  requireMfaForAdmin: false
+  # Lets a scraper reach /metrics with a bearer token. Empty means only an administrator's
+  # session can read it — never unauthenticated either way.
+  metricsToken: ""
+
+# ---------------------------------------------------------------------------- secrets
+#
+# The key that seals every stored kubeconfig. Lose it and none of them can be opened.
+#
+#   kubectl create secret generic kubby-secrets \
+#     --from-literal=encryption-key="$(openssl rand -base64 32)" \
+#     --from-literal=db-password="$(openssl rand -base64 24)"
+#
+# Give the name here and leave `create` false. Letting the chart generate one means the
+# key lives in Helm's release history, which is not where a key belongs.
+secrets:
+  existingSecret: ""
+  encryptionKeyKey: encryption-key
+  dbPasswordKey: db-password
+  # For a first look only. A key generated here is regenerated on every `helm upgrade`
+  # unless it is kept, and a rotated key cannot open what the old one sealed.
+  create: false
+  encryptionKey: ""
+
+# ---------------------------------------------------------------------------- database
+database:
+  # Kubby needs PostgreSQL. This chart does not ship one: a database is a stateful system
+  # with its own backup, upgrade and failover story, and hiding it inside an application
+  # chart is how it ends up with none of them.
+  host: kubby-postgres
+  port: 5432
+  name: kubby
+  user: kubby
+  sslMode: require
+  maxConns: 10
+
+# ---------------------------------------------------------------------------- runtime
+resources:
+  requests:
+    cpu: 100m
+    # Kubby holds an informer cache per cluster; memory is the dimension that grows with
+    # the size of the fleet (ADR-019).
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Applied to the pod. The image is distroless and already runs as 65532; these say so to
+# the API server as well, so a PodSecurity policy can see it.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# ---------------------------------------------------------------------------- service
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: kubby.example.com
+  tls:
+    enabled: false
+    secretName: ""
+
+# ---------------------------------------------------------------------------- policy
+#
+# Only meaningful above one replica, which the first release does not target (ADR-016).
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Who may reach Kubby, and where Kubby may go.
+#
+# Off by default because a policy that is wrong is an outage, and it needs to know the
+# addresses of every cluster Kubby manages — which only the operator knows.
+networkPolicy:
+  enabled: false
+  # Where requests to Kubby come from: an ingress controller, a service mesh gateway.
+  ingressFrom: []
+  # Where Kubby is allowed to reach: the database, the API servers of every managed
+  # cluster, and any metrics or audit endpoint configured.
+  egressTo: []
+
+# ---------------------------------------------------------------------------- in-cluster
+#
+# Kubby managing the cluster it runs in, using its own ServiceAccount rather than a pasted
+# kubeconfig (ADR-022). Off by default: it is a different trust model, and a tool that
+# silently held cluster-admin over its own cluster would be a surprise.
+inCluster:
+  enabled: false
+  # read: everything Kubby's read paths need.
+  # write: adds the verbs the write path uses.
+  #
+  # No wildcard even at `write`: a role that grants `*` cannot be reviewed, and the point
+  # of writing it out is that somebody can read it and disagree.
+  access: read
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}

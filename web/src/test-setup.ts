@@ -18,3 +18,22 @@ if (typeof document !== 'undefined' && !('queryCommandSupported' in document)) {
 if (typeof document !== 'undefined' && !('execCommand' in document)) {
   Object.defineProperty(document, 'execCommand', { value: () => false, writable: true })
 }
+
+// jsdom implements no EventSource. The streaming path is covered by its own unit tests
+// and by an integration test against a real cluster; a component test only needs the
+// constructor not to throw.
+if (typeof globalThis.EventSource === 'undefined') {
+  class StubEventSource {
+    onmessage: ((event: MessageEvent) => void) | null = null
+    onerror: ((event: Event) => void) | null = null
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'EventSource', { value: StubEventSource, writable: true })
+}
+
+// jsdom implements no scrollIntoView. The command palette keeps the highlighted row in
+// view with it, which is a real browser behaviour worth having and nothing a test can
+// assert on.
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {}
+}

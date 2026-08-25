@@ -24,6 +24,7 @@ const CLUSTER: Cluster = {
   readOnly: false,
   impersonationEnabled: false,
   qpsLimit: 50,
+  metricsInsecureSkipVerify: false,
 }
 
 const MEMBER = {

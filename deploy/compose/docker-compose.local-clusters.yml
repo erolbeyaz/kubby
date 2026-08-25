@@ -1,0 +1,28 @@
+# Only needed when the clusters Kubby manages are containers on this same machine.
+#
+# k3d, minikube and kind each put their nodes on their own Docker bridge, and bridges are
+# isolated from one another. Kubby on its own network cannot reach them, and the symptom
+# is a cluster that reports "unreachable" with a perfectly good kubeconfig.
+#
+# On a real network none of this applies: Kubby routes to the API server like anything
+# else and this file is not used.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local-clusters.yml up -d
+#
+# Run `docker network ls` and replace the names below with the ones your clusters made.
+# A network listed here must exist, or compose refuses to start.
+
+services:
+  kubby:
+    networks:
+      # `default` has to be named explicitly: listing any network replaces the default
+      # rather than adding to it, and without it Kubby loses sight of its own database.
+      - default
+      - k3d-kubby-test
+      - kubby-mini
+
+networks:
+  k3d-kubby-test:
+    external: true
+  kubby-mini:
+    external: true

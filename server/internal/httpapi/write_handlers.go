@@ -35,11 +35,20 @@ func (h *resourceHandlers) authoriseWrite(w http.ResponseWriter, r *http.Request
 	}
 
 	_, user := principal(r)
+
+	// Two questions, both of which have to say yes: does this role write at all, and was
+	// this person given write on *this* cluster.
+	//
+	// The grant level used to be read only where clusters are listed, never here — so a
+	// grant of "read" on a production cluster stopped nothing, and the choice offered in
+	// the access screen did not exist below it.
+	mayWrite := rbac.Role(user.Role).Can(rbac.PermClusterWrite) && h.mayWriteToCluster(r, c)
+
 	verdict, err := h.svc.CheckWrite(r.Context(), c,
 		cluster.WriteRequest{Type: resourceType, Namespace: namespace, Name: name, Verb: verb},
 		cluster.Permission{
 			GlobalReadOnly: h.readOnly,
-			MayWrite:       rbac.Role(user.Role).Can(rbac.PermClusterWrite),
+			MayWrite:       mayWrite,
 		},
 		impersonationFor(r, c),
 	)
@@ -54,6 +63,26 @@ func (h *resourceHandlers) authoriseWrite(w http.ResponseWriter, r *http.Request
 		return nil, false
 	}
 	return &writeContext{cluster: c, resource: resourceType, verdict: verdict}, true
+}
+
+// mayWriteToCluster answers whether this person's grant on this cluster permits writing.
+//
+// An administrator holds cluster.manage and is not granted individual clusters at all, so
+// they pass. Everyone else needs a grant of "write"; a grant of "read" is a decision
+// somebody made deliberately and it has to mean something.
+func (h *resourceHandlers) mayWriteToCluster(r *http.Request, c *store.Cluster) bool {
+	_, user := principal(r)
+
+	if rbac.Role(user.Role).Can(rbac.PermClusterManage) {
+		return true
+	}
+
+	level, err := h.clusters.AccessLevel(r.Context(), user.ID, c.ID)
+	if err != nil {
+		// Unreadable grant, no write. Failing closed is the only safe direction here.
+		return false
+	}
+	return level == store.AccessWrite
 }
 
 // ---------------------------------------------------------------- apply

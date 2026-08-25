@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
+import { ContextMenu, type MenuItem } from './ContextMenu'
+
 interface DockPane {
   id: string
   label: string
@@ -16,6 +18,8 @@ interface BottomDockProps {
   onCloseTab: (id: string) => void
   /** Closes the dock entirely. */
   onClose: () => void
+  /** What the + offers. Omit it and the button is not drawn. */
+  newTabItems?: MenuItem[]
   storageKey: string
 }
 
@@ -29,7 +33,16 @@ const DEFAULT_HEIGHT = 300
  * a crash loop means moving between the pod's state and its output, and a full-screen
  * log view turns that into navigation.
  */
-export function BottomDock({ tabs, activeId, onSelect, onCloseTab, onClose, storageKey }: BottomDockProps) {
+export function BottomDock({
+  tabs,
+  activeId,
+  onSelect,
+  onCloseTab,
+  onClose,
+  newTabItems,
+  storageKey,
+}: BottomDockProps) {
+  const [newTabAt, setNewTabAt] = useState<{ x: number; y: number } | null>(null)
   const [height, setHeight] = useState(() => readStored(storageKey, DEFAULT_HEIGHT))
   const [dragging, setDragging] = useState(false)
   const startY = useRef(0)
@@ -107,7 +120,12 @@ export function BottomDock({ tabs, activeId, onSelect, onCloseTab, onClose, stor
           {tabs.map((tab) => (
             <div
               key={tab.id}
-              // Middle-click closes, the way it does in every tab strip people already use.
+              // Middle-click closes, the way it does in every tab strip people already
+              // use. The mousedown has to be swallowed too: without it the browser starts
+              // its autoscroll and, in Chrome, never delivers the auxclick at all.
+              onMouseDown={(event) => {
+                if (event.button === 1) event.preventDefault()
+              }}
               onAuxClick={(event) => {
                 if (event.button === 1) {
                   event.preventDefault()
@@ -169,6 +187,34 @@ export function BottomDock({ tabs, activeId, onSelect, onCloseTab, onClose, stor
               </button>
             </div>
           ))}
+
+          {newTabItems && newTabItems.length > 0 && (
+            <button
+              type="button"
+              // Its own rule to the left: the + is not another tab, and sitting flush
+              // against the last one reads as though it were.
+              style={{ borderLeft: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+              title="New tab"
+              aria-label="New tab"
+              onClick={(event) => {
+                // Anchored under the button rather than at the pointer: this menu belongs
+                // to a control that is always in the same place, unlike a right-click.
+                const box = event.currentTarget.getBoundingClientRect()
+                setNewTabAt({ x: box.left, y: box.bottom + 2 })
+              }}
+              className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center transition-colors hover:bg-[var(--bg-hover)]"
+            >
+              <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M8 3v10M3 8h10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          )}
         </div>
 
         <button
@@ -190,6 +236,10 @@ export function BottomDock({ tabs, activeId, onSelect, onCloseTab, onClose, stor
       <div key={active?.id} className="min-h-0 flex-1">
         {active?.render()}
       </div>
+
+      {newTabAt && newTabItems && (
+        <ContextMenu items={newTabItems} at={newTabAt} onClose={() => setNewTabAt(null)} />
+      )}
     </section>
   )
 }

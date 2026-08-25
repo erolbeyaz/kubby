@@ -85,6 +85,7 @@ export function ClusterDetail({ cluster, canManage, onBack }: ClusterDetailProps
               </Panel>
 
               <SettingsPanel cluster={cluster} />
+              <MetricsPanel cluster={cluster} />
               <ProtectionPanel cluster={cluster} />
               <AccessPanel cluster={cluster} />
               <DangerPanel cluster={cluster} onDeleted={onBack} />
@@ -291,6 +292,117 @@ function SettingsPanel({ cluster }: { cluster: Cluster }) {
  * Mixing an instant toggle with fields that need saving is what made the save button
  * look like it belonged to nothing.
  */
+/**
+ * Where this cluster's history is read from.
+ *
+ * Per cluster rather than one address for the whole deployment: Prometheus is normally
+ * installed into the cluster it observes, so a fleet means one endpoint each. Answering
+ * every cluster from a single address would show one cluster's numbers under every name,
+ * which is worse than showing none. Left empty, the deployment-wide setting is used —
+ * which is what a central Prometheus or a Thanos query layer looks like.
+ */
+function MetricsPanel({ cluster }: { cluster: Cluster }) {
+  const queryClient = useQueryClient()
+  const [url, setUrl] = useState(cluster.metricsUrl ?? '')
+  const [username, setUsername] = useState(cluster.metricsUsername ?? '')
+  const [password, setPassword] = useState('')
+  const [insecure, setInsecure] = useState(cluster.metricsInsecureSkipVerify)
+
+  const update = useMutation({
+    mutationFn: (body: Parameters<typeof api.updateCluster>[1]) => api.updateCluster(cluster.id, body),
+    onSuccess: () => {
+      setPassword('')
+      void queryClient.invalidateQueries({ queryKey: ['clusters'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster-metrics'] })
+    },
+  })
+
+  const error = update.error instanceof ApiError ? update.error : null
+  const dirty =
+    url !== (cluster.metricsUrl ?? '') ||
+    username !== (cluster.metricsUsername ?? '') ||
+    insecure !== cluster.metricsInsecureSkipVerify ||
+    password !== ''
+
+  return (
+    <Panel
+      title="Metrics"
+      description="A Prometheus-compatible endpoint. It supplies the history the Kubernetes API cannot: whether restarts are accelerating, how long a workload has been degraded, how full the nodes' disks are."
+    >
+      <div className="flex flex-col gap-4">
+        <Field
+          label="Prometheus URL"
+          hint="Its root, not a path. Empty falls back to the deployment-wide setting."
+        >
+          {(id) => (
+            <TextInput
+              id={id}
+              value={url}
+              placeholder="http://prometheus.monitoring.svc:9090"
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          )}
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Basic auth user" hint="Leave both empty if it needs no credentials.">
+            {(id) => (
+              <TextInput id={id} value={username} onChange={(e) => setUsername(e.target.value)} />
+            )}
+          </Field>
+          <Field
+            label="Password"
+            // Empty means "leave what is stored", not "remove it": a form that wipes a
+            // credential because it was not retyped is a form that loses credentials.
+            hint={cluster.metricsUsername ? 'Stored. Type to replace it.' : 'Stored encrypted.'}
+          >
+            {(id) => (
+              <TextInput
+                id={id}
+                type="password"
+                value={password}
+                autoComplete="new-password"
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            )}
+          </Field>
+        </div>
+
+        <label className="flex items-center gap-2" style={{ fontSize: 'var(--text-micro)' }}>
+          <input
+            type="checkbox"
+            checked={insecure}
+            onChange={(e) => setInsecure(e.target.checked)}
+          />
+          <span style={{ color: 'var(--text-secondary)' }}>
+            Accept a certificate this deployment does not trust
+          </span>
+        </label>
+
+        {error && <p style={{ fontSize: 'var(--text-micro)', color: 'var(--status-error)' }}>{error.message}</p>}
+
+        <div>
+          <Button
+            onClick={() =>
+              update.mutate({
+                metricsUrl: url.trim(),
+                metricsUsername: username.trim(),
+                metricsInsecureSkipVerify: insecure,
+                ...(password ? { metricsPassword: password } : {}),
+              })
+            }
+            variant="primary"
+            disabled={!dirty}
+            loading={update.isPending}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
 function ProtectionPanel({ cluster }: { cluster: Cluster }) {
   const queryClient = useQueryClient()
 

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -26,7 +27,13 @@ func handleLive() http.HandlerFunc {
 }
 
 // handleReady answers the readiness probe and reports 503 while a dependency is down.
-func handleReady(db Pinger) http.HandlerFunc {
+// SchemaReader reports the applied schema version, so readiness can tell a reachable
+// database from a usable one.
+type SchemaReader interface {
+	SchemaVersion(ctx context.Context) (int64, error)
+}
+
+func handleReady(db Pinger, schema SchemaReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
@@ -39,6 +46,31 @@ func handleReady(db Pinger) http.HandlerFunc {
 			})
 			return
 		}
+
+		// Reachable is not the same as usable. An empty database answers a ping perfectly
+		// well, and a readiness probe that says yes to one is worse than no probe at all:
+		// it tells the orchestrator to send traffic to a server that cannot answer a
+		// single request.
+		if schema != nil {
+			version, err := schema.SchemaVersion(ctx)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, healthResponse{
+					Status: "unavailable",
+					Checks: map[string]string{"database": "ok", "schema": "missing"},
+					Detail: "the database has no schema; migrations have not been applied",
+				})
+				return
+			}
+			writeJSON(w, http.StatusOK, healthResponse{
+				Status: "ok",
+				Checks: map[string]string{
+					"database": "ok",
+					"schema":   "v" + strconv.FormatInt(version, 10),
+				},
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusOK, healthResponse{
 			Status: "ok",
 			Checks: map[string]string{"database": "ok"},

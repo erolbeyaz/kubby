@@ -23,6 +23,8 @@ import (
 	"github.com/erolbeyaz/kubby/internal/crypto"
 	"github.com/erolbeyaz/kubby/internal/httpapi"
 	"github.com/erolbeyaz/kubby/internal/logging"
+	"github.com/erolbeyaz/kubby/internal/metrics"
+	"github.com/erolbeyaz/kubby/internal/settings"
 	"github.com/erolbeyaz/kubby/internal/store"
 	"github.com/erolbeyaz/kubby/internal/webassets"
 )
@@ -77,6 +79,13 @@ func run() error {
 	defer db.Close()
 	logger.Info("database connected", slog.String("target", cfg.DB.Redacted()))
 
+	// Before anything is served. A server that starts on an unmigrated database answers
+	// its health probes and then fails every real request with a missing table, which
+	// looks like a Kubby bug rather than a schema that was never applied.
+	if err := store.Migrate(ctx, cfg.DB.DSN(), logger); err != nil {
+		return err
+	}
+
 	webFS, err := webassets.FS()
 	if err != nil {
 		return fmt.Errorf("load embedded frontend: %w", err)
@@ -95,7 +104,7 @@ func run() error {
 		MaxLockouts:        cfg.Auth.MaxLockouts,
 		RequireMFAForAdmin: cfg.Auth.RequireMFAForAdmin,
 		Argon2:             auth.DefaultArgon2Params(cfg.Auth.Argon2MemoryMiB),
-		Issuer:             cfg.HTTP.PublicURL.Hostname(),
+		Issuer:             cfg.Auth.MFAIssuer,
 	})
 
 	informerPool := cluster.NewInformerPool(cfg.K8s.InformerIdleTTL, logger)
@@ -109,6 +118,12 @@ func run() error {
 		AllowInCluster: cfg.K8s.AllowInCluster,
 	}).WithInformerPool(informerPool)
 
+	registry := metrics.New()
+
+	settingsService := settings.New(db.Settings(), keyring)
+
+	// The SIEM copy is started and closed by the server, so it exists wherever a router
+	// does rather than only in this one call site.
 	auditLog := audit.New(db.Audit(), logger)
 
 	monitor := cluster.NewMonitor(clusterService, db, auditLog, logger, cfg.K8s.HealthCheckInterval)
@@ -118,6 +133,11 @@ func run() error {
 		monitor.Run(ctx)
 	}()
 
+	// A privileged shell pod that outlived its session is a hole this tool opened, so a
+	// sweep runs regardless of whether any session ended politely.
+	shellSweeper := cluster.NewNodeShellSweeper(clusterService, db.Clusters(), settingsService, logger)
+	go shellSweeper.Run(ctx)
+
 	server := httpapi.New(httpapi.Deps{
 		Config:  cfg,
 		Logger:  logger,
@@ -125,7 +145,8 @@ func run() error {
 		Store:   db,
 		Auth:    authService,
 		Cluster: clusterService,
-		Audit:   audit.New(db.Audit(), logger),
+		Audit:   auditLog,
+		Metrics: registry,
 		Keyring: keyring,
 		WebFS:   webFS,
 	})

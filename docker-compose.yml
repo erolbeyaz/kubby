@@ -32,6 +32,10 @@ services:
       args:
         REGISTRY: ${REGISTRY:-docker.io}
         VERSION: ${VERSION:-dev}
+        # Without these the built image reports "unknown" for both, and /version stops
+        # being able to say which build is actually running.
+        COMMIT_SHA: ${COMMIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     image: ${REGISTRY:-docker.io}/${IMAGE_REPO:-kubby}:${TAG:-dev}
     restart: unless-stopped
     depends_on:
@@ -41,7 +45,9 @@ services:
     environment:
       KUBBY_DB_HOST: postgres
     ports:
-      - "8080:8080"
+      # Overridable so a packaged Kubby can be tried alongside a dev stack already on
+      # 8080: KUBBY_HOST_PORT=8090 docker compose --profile full up -d
+      - "${KUBBY_HOST_PORT:-8080}:8080"
     read_only: true
     cap_drop: [ALL]
     security_opt:
@@ -52,6 +58,82 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ---------------------------------------------------------------- observability
+  #
+  # Somewhere for the audit trail to land, so shipping can be seen working rather than
+  # only asserted. Started on demand:
+  #
+  #   docker compose --profile elastic up -d      Elasticsearch + Kibana
+  #   docker compose --profile loki up -d         Loki + Grafana
+  #
+  # Neither is part of Kubby. They are here because a sink that has never been pointed at
+  # a real receiver is a sink nobody has tested.
+
+  elasticsearch:
+    profiles: ["elastic", "observability"]
+    image: ${REGISTRY:-docker.io}/elastic/elasticsearch:9.3.2
+    environment:
+      discovery.type: single-node
+      # Security off and a small heap: this is a local receiver to watch documents arrive
+      # in, not a cluster. A real deployment configures Kubby with credentials.
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "127.0.0.1:9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      # Elasticsearch takes a while to open its port on a laptop already running two
+      # Kubernetes clusters.
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+
+  kibana:
+    profiles: ["elastic", "observability"]
+    image: ${REGISTRY:-docker.io}/elastic/kibana:9.3.2
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "127.0.0.1:5601:5601"
+    security_opt:
+      - no-new-privileges:true
+
+  loki:
+    profiles: ["loki", "observability"]
+    image: ${REGISTRY:-docker.io}/grafana/loki:3.6.1
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "127.0.0.1:3100:3100"
+    # No healthcheck: the Loki image ships the binary and nothing else — no shell, no
+    # wget, no curl — so it cannot probe itself. A check written against tools that are
+    # not there reports unhealthy forever and takes everything depending on it down with
+    # it. Readiness is polled from outside instead, by `make smoke-audit`.
+    security_opt:
+      - no-new-privileges:true
+
+  grafana:
+    profiles: ["loki", "observability"]
+    image: ${REGISTRY:-docker.io}/grafana/grafana:12.3.1
+    depends_on:
+      loki:
+        # Started, not healthy: Loki has no way to report its own health (see above), and
+        # Grafana copes with a data source that is not answering yet.
+        condition: service_started
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres-data:

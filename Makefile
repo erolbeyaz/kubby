@@ -13,7 +13,9 @@ GOLANGCI_VERSION := v2.13.1
 
 # Build metadata surfaced by /version (compliance requirement).
 VERSION    ?= dev
-COMMIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+# Marked dirty when the tree has uncommitted changes, so an image never claims to be a
+# commit it is not built from.
+COMMIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo -dirty)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG        := github.com/erolbeyaz/kubby/internal/httpapi
 LDFLAGS    := -s -w \
@@ -21,11 +23,25 @@ LDFLAGS    := -s -w \
 	-X '$(PKG).CommitSHA=$(COMMIT_SHA)' \
 	-X '$(PKG).BuildDate=$(BUILD_DATE)'
 
-# Image coordinates. Defaults target upstream Docker Hub; override for any mirror or
-# private registry (ADR-027). Registry credentials are never stored here — authenticate
-# with `docker login` or your CI's credential provider.
-#   make docker REGISTRY=my-registry.local IMAGE_REPO=team/kubby
-REGISTRY   ?= docker.io
+# Two registries, deliberately separate. Conflating them means asking the registry you
+# publish to for the golang and node base images, which it does not have.
+#
+#   REGISTRY        where the BASE images are pulled from (ADR-027: mirror, proxy cache)
+#   IMAGE_REGISTRY  where the built image is TAGGED and PUSHED
+#
+#   make release VERSION=0.9.0 IMAGE_REGISTRY=localhost:5000
+#   make release VERSION=0.9.0 IMAGE_REGISTRY=docker.io/erolbeyaz
+#   make docker  REGISTRY=my-mirror.local          # build through a mirror
+#
+# Credentials are never stored here — authenticate with `docker login`.
+REGISTRY       ?= docker.io
+IMAGE_REGISTRY ?= $(REGISTRY)
+
+# The two tools the cluster terminal runs (ADR-094). Kept here as well as in the
+# Dockerfile so `docker-verify` checks the image against the version this repo intends
+# rather than against whatever the image happens to contain.
+KUBECTL_VERSION ?= v1.36.4
+HELM_VERSION    ?= v4.2.3
 IMAGE_REPO ?= kubby
 TAG        ?= $(VERSION)
 
@@ -94,7 +110,11 @@ one-dev: ## Refuse to start a second dev stack over a running one
 	@# other is executing it. The symptoms are wild — a server that answers with an old
 	@# build, or one that fails where the same code works from a shell — and none of
 	@# them point at the cause. Better to refuse than to debug that twice.
-	@if pgrep -f '$(GOBIN)/air' >/dev/null 2>&1; then \
+	@# pgrep -f matches against every process's whole command line, including the shell
+	@# running this very check — the pattern is right there in its arguments. The guard
+	@# then reported a running stack when there was none, and refused to start one. The
+	@# exact-name form looks at the executable instead, which is what was meant.
+	@if pgrep -x air >/dev/null 2>&1; then \
 		echo "A dev stack is already running."; \
 		echo "Stop it (Ctrl-C in its terminal, or 'make dev-stop') before starting another."; \
 		exit 1; \
@@ -102,9 +122,14 @@ one-dev: ## Refuse to start a second dev stack over a running one
 
 .PHONY: dev-stop
 dev-stop: ## Stop a dev stack started in another terminal
-	@pkill -f '$(GOBIN)/air' 2>/dev/null || true
-	@pkill -f 'vite.*$(WEB_DIR)' 2>/dev/null || true
-	@echo "Stopped."
+	@# `pkill -f` matches whole command lines, so the pattern matched the shell running
+	@# the pkill — it killed itself, make reported "Terminated", and whether the dev stack
+	@# actually stopped was luck. The pids are collected first and this shell excluded.
+	@pids=$$(pgrep -x air 2>/dev/null); \
+	for pid in $$pids; do kill $$pid 2>/dev/null || true; done
+	@pids=$$(pgrep -f 'node.*vite' 2>/dev/null | grep -v "^$$$$$$" || true); \
+	for pid in $$pids; do kill $$pid 2>/dev/null || true; done
+	@echo "Stopped." 
 
 .PHONY: reset-embedded
 reset-embedded: ## Drop the embedded frontend so :8080 cannot serve a stale build
@@ -181,13 +206,111 @@ docker: ## Build the container image (override REGISTRY / IMAGE_REPO for your re
 		--build-arg VERSION=$(VERSION) \
 		--build-arg COMMIT_SHA=$(COMMIT_SHA) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		-t $(REGISTRY)/$(IMAGE_REPO):$(TAG) \
-		-t $(REGISTRY)/$(IMAGE_REPO):$(COMMIT_SHA) .
-	@echo "Built $(REGISTRY)/$(IMAGE_REPO):$(TAG) and :$(COMMIT_SHA)"
+		-t $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) \
+		-t $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(COMMIT_SHA) .
+	@echo "Built $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) and :$(COMMIT_SHA)"
+
+.PHONY: config-export
+config-export: ## Export clusters, users, grants and settings to an encrypted archive
+	@test -n "$$KUBBY_BACKUP_PASSPHRASE" || \
+		(echo "Set KUBBY_BACKUP_PASSPHRASE first. It is the only thing protecting the archive."; exit 1)
+	@$(with_env) cd $(SERVER_DIR) && go run ./cmd/kubby-backup -export $(or $(OUT),kubby-$(shell date +%F).bak)
+
+.PHONY: config-restore
+config-restore: ## Restore an archive. IN=path is required; add DRY_RUN=1 to preview.
+	@test -n "$(IN)" || (echo "Give the archive: make config-restore IN=kubby-2026-08-25.bak"; exit 1)
+	@test -n "$$KUBBY_BACKUP_PASSPHRASE" || (echo "Set KUBBY_BACKUP_PASSPHRASE first."; exit 1)
+	@$(with_env) cd $(SERVER_DIR) && go run ./cmd/kubby-backup -restore $(IN) $(if $(DRY_RUN),-dry-run,)
+
+.PHONY: registry-up
+registry-up: ## Start a local image registry on 127.0.0.1:5000
+	@docker start kubby-registry 2>/dev/null || \
+		docker run -d --name kubby-registry --restart unless-stopped \
+			-p 127.0.0.1:5000:5000 \
+			-v kubby-registry-data:/var/lib/registry \
+			registry:3.0.0
+	@until curl -sf http://localhost:5000/v2/ >/dev/null 2>&1; do sleep 1; done
+	@echo "Registry ready on localhost:5000"
+
+.PHONY: registry-list
+registry-list: ## Show what the local registry holds
+	@curl -s http://localhost:5000/v2/_catalog
+	@echo
+	@curl -s http://localhost:5000/v2/$(IMAGE_REPO)/tags/list
+	@echo
+
+.PHONY: release
+release: ## Build a versioned image and push it. VERSION is required.
+	@test "$(VERSION)" != "dev" || (echo "Set a version: make release VERSION=0.9.0"; exit 1)
+	@echo "==> building $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(VERSION) ($(COMMIT_SHA))"
+	docker build \
+		--build-arg REGISTRY=$(REGISTRY) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT_SHA=$(COMMIT_SHA) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(VERSION) .
+	@$(MAKE) --no-print-directory docker-verify TAG=$(VERSION)
+	@echo "==> pushing"
+	docker push $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(VERSION)
+	@echo
+	@echo "Pushed $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(VERSION)"
+	@echo "Put this in deploy/compose/.env:"
+	@echo "  KUBBY_IMAGE=$(IMAGE_REGISTRY)/$(IMAGE_REPO):$(VERSION)"
+	@# No `latest` tag on purpose: it cannot say which version is running and it makes
+	@# rolling back impossible.
+
+.PHONY: tag
+tag: ## Tag the current commit as a release. VERSION is required.
+	@test "$(VERSION)" != "dev" || (echo "Set a version: make tag VERSION=0.9.0"; exit 1)
+	@# A tag on a dirty tree points at a commit that does not contain what was built.
+	@test -z "$$(git status --porcelain)" || \
+		(echo "The working tree has uncommitted changes. Commit them before tagging."; \
+		 git status --short; exit 1)
+	@git tag -a v$(VERSION) -m "Kubby v$(VERSION)"
+	@echo "Tagged v$(VERSION) at $$(git rev-parse --short HEAD)"
+	@echo "Push it when you are ready:  git push origin v$(VERSION)"
+
+.PHONY: smoke-audit
+smoke-audit: ## Verify the audit sinks against real Elasticsearch and Loki
+	@echo "==> starting receivers"
+	docker compose --profile observability up -d
+	@echo "==> waiting for Elasticsearch"
+	@until curl -sf http://localhost:9200/_cluster/health >/dev/null; do sleep 3; done
+	@echo "==> waiting for Loki"
+	@until curl -sf http://localhost:3100/ready 2>/dev/null | grep -q '^ready'; do sleep 3; done
+	@echo "==> pushing"
+	cd $(SERVER_DIR) && KUBBY_TEST_ELASTICSEARCH=http://localhost:9200 \
+		KUBBY_TEST_LOKI=http://localhost:3100 \
+		TZ=UTC go test ./internal/audit/ -run Live -count=1 -v
+	@echo "OK — both receivers accepted and returned what was sent"
+	@echo "     Kibana  http://localhost:5601"
+	@echo "     Grafana http://localhost:3000"
+
+.PHONY: docker-verify
+docker-verify: ## Check the built image is what it claims: right tools, right user, no shell
+	@echo "==> kubectl"
+	@out=$$(docker run --rm --entrypoint /usr/local/bin/kubectl $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) \
+		version --client=true 2>&1); \
+	case "$$out" in *"$(KUBECTL_VERSION)"*) ;; \
+		*) echo "kubectl is missing or not $(KUBECTL_VERSION) — the cluster terminal cannot run:"; \
+		   echo "$$out"; exit 1 ;; esac
+	@echo "==> helm"
+	@out=$$(docker run --rm --entrypoint /usr/local/bin/helm $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) \
+		version --short 2>&1); \
+	case "$$out" in *"$(HELM_VERSION)"*) ;; \
+		*) echo "helm is missing or not $(HELM_VERSION) — the cluster terminal cannot run helm:"; \
+		   echo "$$out"; exit 1 ;; esac
+	@echo "==> non-root"
+	@test "$$(docker inspect $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) --format '{{.Config.User}}')" = "65532:65532" \
+		|| (echo "the image does not run as uid 65532"; exit 1)
+	@echo "==> no shell"
+	@! docker run --rm --entrypoint /bin/sh $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) -c true 2>/dev/null \
+		|| (echo "a shell is reachable in the image; it must not be"; exit 1)
+	@echo "OK — tools present, runs as 65532, no shell"
 
 .PHONY: docker-push
 docker-push: ## Push both tags (authenticate with `docker login` first)
-	docker push $(REGISTRY)/$(IMAGE_REPO):$(TAG)
+	docker push $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG)
 	docker push $(REGISTRY)/$(IMAGE_REPO):$(COMMIT_SHA)
 
 ## ---------------------------------------------------------------- quality

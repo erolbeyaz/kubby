@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/erolbeyaz/kubby/internal/audit"
@@ -12,6 +13,9 @@ import (
 type settingsHandlers struct {
 	svc   *settings.Service
 	audit *audit.Emitter
+	// shipper is reconfigured the moment the setting is saved, so an admin does not have
+	// to restart the process to change where the audit trail is copied.
+	shipper *audit.ShipperManager
 }
 
 func (h *settingsHandlers) read(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +40,34 @@ func (h *settingsHandlers) saveNodeShell(w http.ResponseWriter, r *http.Request)
 	}
 
 	h.record(r, audit.ActionSettingsChanged, "node_shell")
+	h.read(w, r)
+}
+
+// applyShipping installs the stored configuration in the running shipper.
+func (h *settingsHandlers) applyShipping(ctx context.Context) error {
+	if h.shipper == nil {
+		return nil
+	}
+	enabled, cfg, err := h.svc.AuditSinkConfig(ctx)
+	if err != nil {
+		return err
+	}
+	return h.shipper.Apply(ctx, enabled, cfg)
+}
+
+func (h *settingsHandlers) savePodDebug(w http.ResponseWriter, r *http.Request) {
+	var body settings.PodDebug
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	_, user := principal(r)
+	if err := h.svc.SavePodDebug(r.Context(), body, user.ID); err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.record(r, audit.ActionSettingsChanged, "pod_debug")
 	h.read(w, r)
 }
 
@@ -84,6 +116,14 @@ func (h *settingsHandlers) saveAuditSink(w http.ResponseWriter, r *http.Request)
 	// Changing where the audit trail is copied to is itself an auditable act, and one of
 	// the more interesting ones.
 	h.record(r, audit.ActionSettingsChanged, "audit_sink")
+
+	if err := h.applyShipping(r.Context()); err != nil {
+		// Saved but not running: said plainly rather than left for someone to discover
+		// when they go looking for events that never arrived.
+		writeError(w, r, http.StatusBadRequest,
+			"the setting was saved but shipping could not start: "+err.Error())
+		return
+	}
 	h.read(w, r)
 }
 

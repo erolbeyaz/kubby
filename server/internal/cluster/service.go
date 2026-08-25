@@ -21,6 +21,11 @@ var (
 	ErrClusterForbidden   = errors.New("the cluster credential is not permitted")
 	ErrCredentialRejected = errors.New("the cluster credential was rejected")
 	ErrKindUnavailable    = errors.New("this kind is not available on this cluster")
+	// ErrRequestRejected is the cluster refusing what was asked, not failing to answer:
+	// a name that is not a legal Kubernetes name, a field that does not validate. It is
+	// the caller's to fix, and reporting it as a gateway failure sends them to look at
+	// the cluster instead.
+	ErrRequestRejected = errors.New("the cluster rejected the request")
 
 	ErrReadOnlyCluster = errors.New("this cluster is locked read-only")
 	ErrNoCredential    = errors.New("cluster has no stored credential")
@@ -46,6 +51,9 @@ type Service struct {
 	settings  Settings
 	pool      *InformerPool
 	discovery *discoveryCache
+	// metricsDefaults supplies the deployment-wide Prometheus, read at the moment it is
+	// needed so an admin's change takes effect without a restart.
+	metricsDefaults MetricsDefaultsFunc
 }
 
 func NewService(db *store.DB, keyring *crypto.Keyring, settings Settings) *Service {

@@ -8,6 +8,7 @@ import { NamespacePicker } from '@/components/NamespacePicker'
 import { VirtualRows } from '@/components/VirtualRows'
 import { ApiError, api, type Column, type ResourceRow } from '@/lib/api'
 import { formatAbsolute, formatAge, isLiveAge } from '@/lib/time'
+import { useResourceStream } from '@/lib/use-resource-stream'
 import { useTicker } from '@/lib/use-ticker'
 
 import { statusColor, typeKeyForKind } from './statusColor'
@@ -84,12 +85,25 @@ export function ResourceTable({
 
   const namespaceParam = namespaces.join(',')
 
+  const queryKey = ['resources', clusterId, typeKey, namespaceParam, search, sort, desc]
   const list = useQuery({
-    queryKey: ['resources', clusterId, typeKey, namespaceParam, search, sort, desc],
+    queryKey,
     queryFn: ({ signal }) =>
       api.resources(clusterId, typeKey, { namespace: namespaceParam, search, sort, desc }, signal),
-    refetchInterval: live ? 1_000 : 15_000,
+    // The stream keeps the list current; the poll is the floor under it for anything the
+    // watch cannot express — a server-side search, a sort, a cluster that refuses watches.
+    refetchInterval: live ? 1_000 : 60_000,
     placeholderData: (previous) => previous,
+  })
+
+  // A search is answered by the API server, so a streamed row cannot be told whether it
+  // still matches. While one is typed the list stays on the poll.
+  useResourceStream({
+    clusterId,
+    typeKey,
+    namespaces,
+    enabled: search === '',
+    queryKey,
   })
 
   const error = list.error instanceof ApiError ? list.error : null

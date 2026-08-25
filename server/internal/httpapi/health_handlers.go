@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -98,6 +99,34 @@ func (h *resourceHandlers) workloadsOverview(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, overview)
+}
+
+// relations answers what an object is part of, and what is part of it.
+func (h *resourceHandlers) relations(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.resolveCluster(w, r)
+	if !ok {
+		return
+	}
+
+	resourceType, err := cluster.LookupType(strings.Trim(chi.URLParam(r, "*"), "/"))
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "unknown resource type")
+		return
+	}
+
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeError(w, r, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	relations, err := h.svc.Relations(r.Context(), c, resourceType,
+		r.URL.Query().Get("namespace"), name, impersonationFor(r, c))
+	if err != nil {
+		writeResourceError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relations": relations})
 }
 
 // ---------------------------------------------------------------- secrets

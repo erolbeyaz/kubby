@@ -101,6 +101,64 @@ jobs:
         env:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
 
+  # Every scanner here fails the build on a finding and prints what it found. A scan that
+  # reports and passes is a scan nobody reads, which is worse than not running it: it
+  # produces the appearance of coverage without any.
+  vulnerabilities:
+    name: Dependencies (govulncheck, npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: server/go.sum
+
+      # Reachability-aware: it reports a CVE only when the vulnerable code is actually
+      # called, so the findings are ones somebody should act on rather than a list to
+      # learn to ignore.
+      - name: govulncheck
+        working-directory: server
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm audit
+        working-directory: web
+        # High and above only. Kubby ships no npm package to anyone, so a moderate
+        # advisory in a build-time dependency is not a reason to stop a release, and
+        # treating it as one teaches the team to pass --force.
+        run: npm audit --audit-level=high
+
+  code-scan:
+    name: Code (semgrep)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.145.0
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: semgrep
+        run: |
+          semgrep scan \
+            --config p/golang \
+            --config p/typescript \
+            --config p/react \
+            --config p/secrets \
+            --config p/owasp-top-ten \
+            --error \
+            --skip-unknown-extensions \
+            --exclude 'web/dist' \
+            --exclude '**/*_test.go' \
+            .
+
   image:
     name: Container image
     runs-on: ubuntu-latest
@@ -138,3 +196,89 @@ jobs:
             exit 1
           fi
           echo "Image runs as $user."
+
+      # The cluster terminal runs kubectl and helm and nothing else (ADR-094). If they are
+      # not in the image the feature is simply broken in every real deployment, and the
+      # dev machine having them installed hides exactly that.
+      - name: Assert the terminal's tools are in the image
+        run: |
+          out=$(docker run --rm --entrypoint /usr/local/bin/kubectl kubby:ci version --client=true 2>&1)
+          case "$out" in
+            *v1.36.4*) echo "kubectl: $out" ;;
+            *) echo "kubectl missing or wrong version:"; echo "$out"; exit 1 ;;
+          esac
+
+          out=$(docker run --rm --entrypoint /usr/local/bin/helm kubby:ci version --short 2>&1)
+          case "$out" in
+            *v4.2.3*) echo "helm: $out" ;;
+            *) echo "helm missing or wrong version:"; echo "$out"; exit 1 ;;
+          esac
+
+      # A CVE in a base image is the one nobody notices: the image is rebuilt from a tag
+      # that moved months ago and nothing says so.
+      - name: trivy (image)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: kubby:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: trivy (filesystem and config)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      # Proof it actually starts and serves, rather than only that it built. Kubby is
+      # fail-fast by design and refuses to start without a database, so the probe brings
+      # one up rather than pretending the config is optional.
+      - name: Assert the image serves
+        run: |
+          set -e
+          docker network create kubby-ci-net
+
+          docker run -d --name kubby-ci-db --network kubby-ci-net \
+            -e POSTGRES_DB=kubby -e POSTGRES_USER=kubby -e POSTGRES_PASSWORD=ci \
+            postgres:18.6
+          for _ in $(seq 1 30); do
+            docker exec kubby-ci-db pg_isready -U kubby >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          docker run -d --name kubby-ci-probe --network kubby-ci-net -p 18080:8080 \
+            -e KUBBY_HTTP_ADDR=:8080 \
+            -e KUBBY_PUBLIC_URL=http://localhost:18080 \
+            -e KUBBY_ENCRYPTION_KEY="$(head -c 32 /dev/urandom | base64)" \
+            -e KUBBY_DB_HOST=kubby-ci-db \
+            -e KUBBY_DB_PASSWORD=ci \
+            -e KUBBY_DB_SSLMODE=disable \
+            kubby:ci
+
+          ok=""
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:18080/healthz >/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+
+          echo "--- kubby log ---"
+          docker logs kubby-ci-probe 2>&1 | tail -20
+
+          if [ -n "$ok" ]; then
+            curl -sf http://localhost:18080/readyz && echo
+            curl -sf http://localhost:18080/version && echo
+            # The SPA is embedded in the binary; serving it is the last thing that could
+            # silently be missing from a build that otherwise looks fine.
+            curl -sf http://localhost:18080/ | grep -q '<!doctype html>' \
+              || { echo "the image does not serve the web assets"; ok=""; }
+          fi
+
+          docker rm -f kubby-ci-probe kubby-ci-db >/dev/null
+          docker network rm kubby-ci-net >/dev/null
+          test -n "$ok" || { echo "the image did not come up"; exit 1; }

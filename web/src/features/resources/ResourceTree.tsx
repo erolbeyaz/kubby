@@ -44,7 +44,6 @@ export function ResourceTree({
           typeKey="applications"
           selectedType={selectedType}
           onSelectType={onSelectType}
-          note="phase 9"
         />
         <TopEntry icon="storage" label="Nodes" typeKey="nodes" selectedType={selectedType} onSelectType={onSelectType} />
 

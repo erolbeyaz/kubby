@@ -12,6 +12,7 @@ import (
 	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/health"
 	"github.com/erolbeyaz/kubby/internal/rbac"
+	"github.com/erolbeyaz/kubby/internal/settings"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
 
@@ -33,6 +34,12 @@ type resourceHandlers struct {
 	allowedOrigins []string
 	// readOnly is the deployment-wide kill switch: when it is on, nothing writes.
 	readOnly bool
+	// settings supplies the node shell's image and namespace at the moment it is needed,
+	// so an admin's change takes effect without a restart.
+	settings *settings.Service
+	// forwards holds the open tunnels. They live in memory on purpose: a forward is tied
+	// to this process, and a restart should end it rather than resurrect it.
+	forwards *forwardRegistry
 }
 
 // resolveCluster loads the cluster in the URL and enforces read access. Sharing this
@@ -238,6 +245,10 @@ func writeResourceError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusNotFound, err.Error())
 	case errors.Is(err, cluster.ErrKindUnavailable):
 		writeError(w, r, http.StatusNotFound, err.Error())
+	case errors.Is(err, cluster.ErrRequestRejected):
+		// The cluster answered and said no to what was asked. That is the caller's to
+		// fix, and a 502 would send them to investigate a cluster that is working.
+		writeError(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, cluster.ErrClusterForbidden):
 		writeError(w, r, http.StatusForbidden, err.Error())
 	case errors.Is(err, cluster.ErrCredentialRejected):

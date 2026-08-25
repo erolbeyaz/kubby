@@ -1,0 +1,169 @@
+{{- if .Values.inCluster.enabled }}
+{{/*
+What Kubby may do in the cluster it runs in.
+
+Written out rather than granted with a wildcard, even for `write`. A role that says `*`
+cannot be reviewed: nobody reading it can tell whether it grants more than the tool needs,
+and a tool holding cluster-wide credentials is exactly the one where somebody should be
+able to read the list and disagree with an entry.
+
+Cluster-scoped because Kubby's whole purpose is to look across namespaces. Narrowing it to
+a list of namespaces would be a different product.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubby.fullname" . }}
+  labels: {{- include "kubby.labels" . | nindent 4 }}
+rules:
+  # Everything the browsing and health paths read.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/status
+      - services
+      - endpoints
+      - namespaces
+      - nodes
+      - nodes/status
+      - configmaps
+      - events
+      - persistentvolumeclaims
+      - persistentvolumes
+      - serviceaccounts
+      - replicationcontrollers
+      - resourcequotas
+      - limitranges
+    verbs: [get, list, watch]
+
+  # Secrets are read separately and deliberately: revealing one is an audited act
+  # (ADR-057), and keeping the grant on its own line makes it visible in review.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets, deployments/status]
+    verbs: [get, list, watch]
+
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, ingressclasses, networkpolicies]
+    verbs: [get, list, watch]
+
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
+
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch]
+
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    verbs: [get, list, watch]
+
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get, list, watch]
+
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations]
+    verbs: [get, list, watch]
+
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods, nodes]
+    verbs: [get, list]
+
+  # Discovery, so custom resources can be listed generically.
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+
+  # Kubby asks the cluster what this identity may do before offering an action, so the
+  # answer comes from the cluster rather than from a guess in the browser (ADR-005).
+  - apiGroups: [authorization.k8s.io]
+    resources: [selfsubjectaccessreviews, selfsubjectrulesreviews]
+    verbs: [create]
+
+{{- if eq .Values.inCluster.access "write" }}
+  # ---- write ----
+  #
+  # Only reached when inCluster.access is "write". Kubby still asks the cluster for
+  # permission per action; this is the ceiling, not the policy.
+  - apiGroups: [""]
+    resources: [pods, services, configmaps, secrets, persistentvolumeclaims, serviceaccounts]
+    verbs: [create, update, patch, delete]
+
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [update, patch]
+
+  # Draining a node evicts the pods on it.
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+
+  # The pod shell and the debug container.
+  - apiGroups: [""]
+    resources: [pods/exec, pods/portforward]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods/ephemeralcontainers]
+    verbs: [get, update, patch]
+
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets, deployments/scale, statefulsets/scale, replicasets/scale]
+    verbs: [create, update, patch, delete]
+
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [create, update, patch, delete]
+
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [create, update, patch, delete]
+
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [create, update, patch, delete]
+
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [create, update, patch, delete]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubby.fullname" . }}
+  labels: {{- include "kubby.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubby.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubby.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

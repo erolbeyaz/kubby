@@ -4,6 +4,8 @@ import { Callout } from '@/components/Callout'
 import { ApiError, api, type ResourceRow, type WorkloadOverview } from '@/lib/api'
 import { formatAbsolute, formatAge } from '@/lib/time'
 
+import { ClusterDashboard } from '@/features/metrics/ClusterDashboard'
+
 import { statusColor } from './statusColor'
 
 interface WorkloadsOverviewProps {
@@ -52,7 +54,22 @@ export function WorkloadsOverview({ clusterId, namespaces, onOpenType }: Workloa
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <EventTable rows={events} />
+        {/* What the cluster has been doing, above what it is doing: someone opening this
+            screen is asking "is anything wrong", and the events are the detail under
+            that answer rather than the answer itself. */}
+        <div className="p-4">
+          <ClusterDashboard clusterId={clusterId} />
+        </div>
+
+        <div className="border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+          <h3
+            className="px-4 py-2 font-semibold uppercase tracking-[0.08em]"
+            style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
+          >
+            Recent events
+          </h3>
+          <EventTable rows={events} />
+        </div>
       </div>
     </div>
   )

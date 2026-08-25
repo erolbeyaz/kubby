@@ -69,6 +69,19 @@ const (
 
 	// ActionSettingsChanged records which group of settings moved, never their values.
 	ActionSettingsChanged = "settings.changed"
+
+	// Interactive sessions. A tool that hands out cluster-wide shells without a record
+	// of what was typed is not auditable (ADR-013 #5).
+	ActionPodShellOpened  = "pod.shell.opened"
+	ActionNodeShellOpened = "node.shell.opened"
+	ActionShellTranscript = "shell.transcript"
+	ActionPortForwarded   = "port.forwarded"
+	// A terminal is scoped to kubectl, so the record is the command line itself.
+	ActionTerminalOpened  = "terminal.opened"
+	ActionTerminalCommand = "terminal.command"
+	// A debug container cannot be removed while the pod lives, so starting one is a
+	// lasting change to that pod and is recorded as such.
+	ActionDebugContainerStarted = "pod.debug.started"
 )
 
 const (
@@ -101,6 +114,9 @@ type Recorder interface {
 type Emitter struct {
 	recorder Recorder
 	logger   *slog.Logger
+	// shipper copies events to a SIEM. Nil is the normal case and changes nothing: the
+	// database and the log stream are the audit trail, and this is a copy of it.
+	shipper *ShipperManager
 }
 
 func New(recorder Recorder, logger *slog.Logger) *Emitter {
@@ -108,6 +124,17 @@ func New(recorder Recorder, logger *slog.Logger) *Emitter {
 		recorder: recorder,
 		logger:   logger.With(slog.String("stream", string(logging.StreamAudit))),
 	}
+}
+
+// WithShipper attaches the SIEM copy. It is deliberately the last thing Record does and
+// cannot fail the record: a shipper that is down, wedged or misconfigured must not be
+// able to stop an event being written (ADR-013 #5).
+func (e *Emitter) WithShipper(shipper *ShipperManager) *Emitter {
+	if e == nil {
+		return nil
+	}
+	e.shipper = shipper
+	return e
 }
 
 // Record writes the event to the database and the audit log stream.
@@ -140,6 +167,23 @@ func (e *Emitter) Record(ctx context.Context, ev Event) {
 	}
 	e.logger.LogAttrs(ctx, slog.LevelInfo, "audit", attrs...)
 
+	if e.shipper != nil {
+		e.shipper.Ship(Shipped{
+			Timestamp:    time.Now().UTC(),
+			Action:       ev.Action,
+			Result:       ev.Result,
+			ActorEmail:   ev.ActorEmail,
+			ActorID:      uuidString(ev.ActorID),
+			ClusterID:    uuidString(ev.ClusterID),
+			Namespace:    ev.Namespace,
+			ResourceKind: ev.ResourceKind,
+			ResourceName: ev.ResourceName,
+			IPAddress:    addrString(ev.IPAddress),
+			RequestID:    requestID,
+			Details:      ev.Details,
+		})
+	}
+
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 
@@ -162,4 +206,18 @@ func (e *Emitter) Record(ctx context.Context, ev Event) {
 		e.logger.LogAttrs(ctx, slog.LevelError, "audit write failed",
 			append(attrs, slog.String("error", err.Error()))...)
 	}
+}
+
+func uuidString(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
+}
+
+func addrString(addr *netip.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	return addr.String()
 }

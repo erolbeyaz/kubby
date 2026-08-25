@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { GlobalViews } from '@/app/GlobalViews'
@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
 import { StatusBar } from '@/components/StatusBar'
+import { CommandPalette } from '@/features/search/CommandPalette'
 import { AccountScreen } from '@/features/account/AccountScreen'
 import { ManageClustersScreen } from '@/features/clusters/ManageClustersScreen'
 import { FleetHealth } from '@/features/health/FleetHealth'
@@ -44,6 +45,32 @@ export function Shell({ me, onSignOut }: ShellProps) {
 
   const list = clusters.data?.clusters ?? []
   const current = list.find((c) => c.id === location.clusterId) ?? null
+  // The explorer draws its own rail and carries the status strip inside it.
+  const inExplorer = location.section === 'clusters' && current !== null
+
+  const [searching, setSearching] = useState(false)
+
+  // Ctrl+K anywhere, except while typing into something: the shortcut belongs to the
+  // window, and stealing it from a YAML editor or a terminal would be worse than not
+  // having it.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key !== 'k') return
+
+      const target = event.target as HTMLElement | null
+      const typing =
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable === true
+      if (typing) return
+
+      event.preventDefault()
+      setSearching(true)
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   const openClusterOverview = (clusterId: string) =>
     navigate({
@@ -155,6 +182,9 @@ export function Shell({ me, onSignOut }: ShellProps) {
               })
             }
             onManageClusters={() => navigate({ section: 'manage' })}
+            footer={(leading) => (
+              <StatusBar connection={connection} version={version} detail={detail} leading={leading} />
+            )}
           />
         ) : clusters.isLoading ? (
           <EmptyState title="Loading clusters…" description="" />
@@ -175,7 +205,26 @@ export function Shell({ me, onSignOut }: ShellProps) {
         )}
       </div>
 
-      <StatusBar connection={connection} version={version} detail={detail} />
+      {/* Only where there is no rail of its own. Inside the cluster explorer the strip
+          sits in the right-hand column instead, so the rail reaches the bottom. */}
+      {!inExplorer && <StatusBar connection={connection} version={version} detail={detail} />}
+
+      {searching && (
+        <CommandPalette
+          onClose={() => setSearching(false)}
+          onOpen={(hit) => {
+            setSearching(false)
+            navigate({
+              section: 'clusters',
+              clusterId: hit.clusterId,
+              typeKey: hit.typeKey,
+              namespaces: hit.namespace ? [hit.namespace] : [],
+              objectName: hit.name,
+              objectNamespace: hit.namespace ?? '',
+            })
+          }}
+        />
+      )}
     </div>
   )
 }

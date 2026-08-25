@@ -8,11 +8,21 @@ import { SettingsSection } from './SettingsSection'
 import { Switch } from './Switch'
 import { useSaveSetting } from './useSaveSetting'
 
+// Exactly the kinds that have a sender behind them. Syslog was offered here and had
+// none, so choosing it left the screen saying shipping was on while nothing left the
+// process; a SIEM that ingests over syslog is reached through the HTTP endpoint instead.
 const KINDS = [
   { value: 'elasticsearch', label: 'Elasticsearch' },
   { value: 'loki', label: 'Loki' },
-  { value: 'syslog', label: 'Syslog (QRadar, ArcSight)' },
-  { value: 'http', label: 'HTTP endpoint' },
+  { value: 'http', label: 'HTTP endpoint (QRadar, ArcSight, a collector)' },
+]
+
+// How the stored token is presented. Getting this wrong is a 401 that looks like a
+// wrong password, so it is asked rather than guessed from the sink type.
+const SCHEMES = [
+  { value: '', label: 'Basic auth (with the user above)' },
+  { value: 'bearer', label: 'Bearer token' },
+  { value: 'apikey', label: 'Elasticsearch API key' },
 ]
 
 /**
@@ -90,6 +100,15 @@ export function AuditSinkSection({ value }: { value: KubbySettings['auditSink'] 
         )}
       </Field>
 
+      {form.kind === 'elasticsearch' && (
+        <Switch
+          label="Write to a data stream"
+          hint="What Elastic recommends for an append-only trail: it handles rollover and retention itself. Kubby creates the index template the stream needs."
+          checked={form.dataStream}
+          onChange={(dataStream) => setForm({ ...form, dataStream })}
+        />
+      )}
+
       <Field label="Username" hint="Optional.">
         {(id) => (
           <TextInput
@@ -98,6 +117,22 @@ export function AuditSinkSection({ value }: { value: KubbySettings['auditSink'] 
             autoComplete="off"
             onChange={(event) => setForm({ ...form, username: event.target.value })}
           />
+        )}
+      </Field>
+
+      <Field label="Credential type" hint="How the token below is sent.">
+        {(id) => (
+          <Select
+            id={id}
+            value={form.scheme ?? ''}
+            onChange={(event) => setForm({ ...form, scheme: event.target.value })}
+          >
+            {SCHEMES.map((scheme) => (
+              <option key={scheme.value} value={scheme.value}>
+                {scheme.label}
+              </option>
+            ))}
+          </Select>
         )}
       </Field>
 

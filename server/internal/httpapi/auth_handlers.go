@@ -10,6 +10,7 @@ import (
 	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/auth"
 	"github.com/erolbeyaz/kubby/internal/logging"
+	"github.com/erolbeyaz/kubby/internal/metrics"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
@@ -26,6 +27,17 @@ type authHandlers struct {
 	secure     bool
 	refreshTTL time.Duration
 	loginLimit *rateLimiter
+	// metrics is optional; nil simply means nothing is counted.
+	metrics *metrics.Registry
+}
+
+// countLogin records the outcome. A failure count that climbs steadily is the first
+// visible sign of a password spray, and it is invisible in the audit log until somebody
+// goes looking.
+func (h *authHandlers) countLogin(result string) {
+	if h.metrics != nil {
+		h.metrics.LoginAttempts.WithLabelValues(result).Inc()
+	}
 }
 
 // ---------------------------------------------------------------- setup wizard
@@ -102,10 +114,12 @@ func (h *authHandlers) login(w http.ResponseWriter, r *http.Request) {
 	ip := clientAddr(r)
 	result, err := h.svc.Authenticate(r.Context(), req.Email, req.Password, ip, r.UserAgent())
 	if err != nil {
+		h.countLogin("failure")
 		h.recordFailedLogin(r, req.Email, err)
 		h.writeLoginFailure(w, r, err)
 		return
 	}
+	h.countLogin("success")
 
 	// A legitimate user should not stay throttled by their own earlier typos.
 	h.loginLimit.reset(clientKey(r))

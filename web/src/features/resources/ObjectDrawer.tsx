@@ -9,6 +9,7 @@ import { formatAbsolute, formatAge } from '@/lib/time'
 import { toYaml } from '@/lib/yaml'
 
 import { availableActionsFor } from './actions'
+import { Relations } from './Relations'
 import { RestartBadge } from './RestartBadge'
 import { SecretKeys } from './SecretKeys'
 
@@ -133,6 +134,16 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
                 <SecretKeys clusterId={clusterId} namespace={row.namespace ?? ''} name={row.name} />
               </Group>
             )}
+
+            <Group title="Related">
+              <Relations
+                clusterId={clusterId}
+                typeKey={typeKey}
+                namespace={row.namespace ?? ''}
+                name={row.name}
+                onNavigate={onNavigate}
+              />
+            </Group>
 
             {kind === 'Pod' && (
               <Group title="Restarts">

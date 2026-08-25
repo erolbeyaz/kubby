@@ -8,6 +8,8 @@ interface StatusBarProps {
   connection: ConnectionState
   version: VersionInfo | undefined
   detail?: string | undefined
+  /** Sits at the far left, before the connection state. The dock's + lives here. */
+  leading?: React.ReactNode
 }
 
 const CONNECTION_LABEL: Record<ConnectionState, string> = {
@@ -25,20 +27,25 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
 }
 
 /** The always-present bottom strip: connection state, build identity, key hints. */
-export function StatusBar({ connection, version, detail }: StatusBarProps) {
+export function StatusBar({ connection, version, detail, leading }: StatusBarProps) {
   return (
     <footer
-      className="relative flex h-7 shrink-0 items-center gap-3 border-t px-3 font-mono text-[12px]"
+      // h-10 rather than a smaller strip: the rail beside it ends in the Kubby Settings
+      // row, which is 40px tall, and the two are now one line across the window instead
+      // of two edges that nearly meet.
+      className="relative flex h-10 shrink-0 items-center gap-3.5 border-t pl-1.5 pr-3.5 font-mono text-[13px]"
       style={{
         backgroundColor: 'var(--bg-surface)',
         borderColor: 'var(--border-subtle)',
         color: 'var(--text-muted)',
       }}
     >
+      {leading}
+
       <span className="flex items-center gap-1.5" title={detail ?? CONNECTION_LABEL[connection]}>
         <span
           aria-hidden="true"
-          className="inline-block h-1.5 w-1.5 rounded-full"
+          className="inline-block h-2 w-2 rounded-full"
           style={{ backgroundColor: CONNECTION_COLOR[connection] }}
         />
         <span style={{ color: 'var(--text-secondary)' }}>{CONNECTION_LABEL[connection]}</span>

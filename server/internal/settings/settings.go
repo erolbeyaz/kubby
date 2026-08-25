@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/erolbeyaz/kubby/internal/audit"
+
 	"github.com/erolbeyaz/kubby/internal/crypto"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
@@ -16,6 +18,7 @@ import (
 // Keys under which each group is stored.
 const (
 	KeyNodeShell = "node_shell"
+	KeyPodDebug  = "pod_debug"
 	KeyMetrics   = "metrics"
 	KeyAuditSink = "audit_sink"
 )
@@ -44,6 +47,20 @@ func DefaultNodeShell() NodeShell {
 	return NodeShell{Image: "docker.io/library/alpine:3.20", Namespace: "kube-system"}
 }
 
+// PodDebug is the image brought alongside a container that has no shell of its own.
+//
+// A distroless image is distroless on purpose, and the answer is not to rebuild it but to
+// attach a container that does have a shell. It shares the pod's namespaces, so the
+// prompt reaches the workload's processes and files (ADR-013 #4).
+type PodDebug struct {
+	Image string `json:"image"`
+}
+
+// DefaultPodDebug is small and has the tools someone opening a shell reaches for first.
+func DefaultPodDebug() PodDebug {
+	return PodDebug{Image: "docker.io/library/busybox:1.36"}
+}
+
 // Metrics is where historical measurements are read from.
 //
 // metrics-server keeps no history, so a chart over time needs something that does. This
@@ -65,7 +82,7 @@ type Metrics struct {
 // because a trail that lives only in the tool being audited is not much of a trail.
 type AuditSink struct {
 	Enabled bool `json:"enabled"`
-	// Kind is elasticsearch, loki, syslog or http.
+	// Kind is elasticsearch, loki or http.
 	Kind     string `json:"kind"`
 	URL      string `json:"url"`
 	Index    string `json:"index,omitempty"`
@@ -73,9 +90,21 @@ type AuditSink struct {
 	// HasToken tells the browser a credential is stored without sending it.
 	HasToken           bool `json:"hasToken"`
 	InsecureSkipVerify bool `json:"insecureSkipVerify"`
+	// Scheme is how the token is presented: "bearer", "apikey", or empty for basic auth
+	// beside Username.
+	Scheme string `json:"scheme,omitempty"`
+	// DataStream writes to an Elasticsearch data stream rather than a plain index, which
+	// is what Elastic recommends for append-only time series like an audit trail.
+	DataStream bool `json:"dataStream,omitempty"`
 }
 
-var sinkKinds = map[string]bool{"elasticsearch": true, "loki": true, "syslog": true, "http": true}
+// The kinds that actually ship. This list must stay identical to what audit.NewSink
+// builds: a setting that can be saved but has no sender behind it reads as "shipping is
+// on" while nothing leaves the process, which is the worst of the three outcomes.
+//
+// syslog was here and is not implemented. A SIEM that ingests over syslog — QRadar, for
+// one — is reached through the `http` kind, which posts newline-delimited JSON.
+var sinkKinds = map[string]bool{"elasticsearch": true, "loki": true, "http": true}
 
 // Service reads and writes settings, sealing the secrets they carry.
 type Service struct {
@@ -90,14 +119,18 @@ func New(repo *store.SettingsRepo, keyring *crypto.Keyring) *Service {
 // All is everything an admin screen shows. Secrets are reported as present, never sent.
 type All struct {
 	NodeShell NodeShell `json:"nodeShell"`
+	PodDebug  PodDebug  `json:"podDebug"`
 	Metrics   Metrics   `json:"metrics"`
 	AuditSink AuditSink `json:"auditSink"`
 }
 
 func (s *Service) All(ctx context.Context) (*All, error) {
-	out := &All{NodeShell: DefaultNodeShell()}
+	out := &All{NodeShell: DefaultNodeShell(), PodDebug: DefaultPodDebug()}
 
 	if _, err := s.repo.Get(ctx, KeyNodeShell, &out.NodeShell); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.Get(ctx, KeyPodDebug, &out.PodDebug); err != nil {
 		return nil, err
 	}
 	if _, err := s.repo.Get(ctx, KeyMetrics, &out.Metrics); err != nil {
@@ -141,6 +174,19 @@ func (s *Service) SaveNodeShell(ctx context.Context, value NodeShell, by uuid.UU
 	return s.repo.Put(ctx, KeyNodeShell, value, by)
 }
 
+// SavePodDebug stores the image debug containers are started from.
+func (s *Service) SavePodDebug(ctx context.Context, value PodDebug, by uuid.UUID) error {
+	value.Image = strings.TrimSpace(value.Image)
+
+	if value.Image == "" {
+		return fmt.Errorf("an image reference is required")
+	}
+	if strings.Contains(value.Image, " ") {
+		return fmt.Errorf("an image reference cannot contain spaces")
+	}
+	return s.repo.Put(ctx, KeyPodDebug, value, by)
+}
+
 // SaveMetrics stores the metrics connection, sealing the password when one is given.
 //
 // An empty password means "leave what is stored", not "clear it": a form that wipes a
@@ -179,6 +225,31 @@ func (s *Service) SaveAuditSink(ctx context.Context, value AuditSink, token stri
 		return err
 	}
 	return s.storeSecret(ctx, SecretAuditToken, token, clearToken, by)
+}
+
+// AuditSinkConfig assembles what the shipper needs, opening the stored token at the
+// moment it is used rather than holding it anywhere.
+func (s *Service) AuditSinkConfig(ctx context.Context) (bool, audit.SinkConfig, error) {
+	all, err := s.All(ctx)
+	if err != nil {
+		return false, audit.SinkConfig{}, err
+	}
+
+	token, _, err := s.Secret(ctx, SecretAuditToken)
+	if err != nil {
+		return false, audit.SinkConfig{}, err
+	}
+
+	return all.AuditSink.Enabled, audit.SinkConfig{
+		Kind:               all.AuditSink.Kind,
+		URL:                all.AuditSink.URL,
+		Index:              all.AuditSink.Index,
+		Username:           all.AuditSink.Username,
+		Token:              token,
+		Scheme:             all.AuditSink.Scheme,
+		InsecureSkipVerify: all.AuditSink.InsecureSkipVerify,
+		DataStream:         all.AuditSink.DataStream,
+	}, nil
 }
 
 func (s *Service) storeSecret(ctx context.Context, key, value string, clear bool, by uuid.UUID) error {
@@ -229,4 +300,14 @@ func validateURL(raw string) error {
 		return fmt.Errorf("the URL has no host")
 	}
 	return nil
+}
+
+// NodeShellNamespace answers where node shells are started, for the sweeper that has to
+// look for abandoned ones without holding a request's context.
+func (s *Service) NodeShellNamespace(ctx context.Context) (string, bool, error) {
+	all, err := s.All(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return all.NodeShell.Namespace, all.NodeShell.Enabled, nil
 }

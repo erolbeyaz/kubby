@@ -9,12 +9,13 @@ import { UsersScreen } from '@/features/users/UsersScreen'
 import { AuditSinkSection } from './AuditSinkSection'
 import { MetricsSection } from './MetricsSection'
 import { NodeShellSection } from './NodeShellSection'
+import { PodDebugSection } from './PodDebugSection'
 
-type Tab = 'users' | 'node-shell' | 'metrics' | 'audit'
+type Tab = 'users' | 'shells' | 'metrics' | 'audit'
 
 const TABS: { id: Tab; label: string; icon: IconName; hint: string }[] = [
   { id: 'users', label: 'Users', icon: 'shield', hint: 'Who may sign in, and what they may do' },
-  { id: 'node-shell', label: 'Node shell', icon: 'terminal', hint: 'Where the shell pod comes from' },
+  { id: 'shells', label: 'Shells', icon: 'terminal', hint: 'Where a shell pod or debug container comes from' },
   { id: 'metrics', label: 'Metrics', icon: 'monitor', hint: 'Where measurements over time are read from' },
   { id: 'audit', label: 'Audit shipping', icon: 'events', hint: 'Where the audit trail is copied to' },
 ]
@@ -75,7 +76,12 @@ export function SettingsScreen({ me }: { me: Me }) {
 
         {tab === 'users' && <UsersScreen me={me} />}
 
-        {settings.data && tab === 'node-shell' && <NodeShellSection value={settings.data.nodeShell} />}
+        {settings.data && tab === 'shells' && (
+          <>
+            <NodeShellSection value={settings.data.nodeShell} />
+            <PodDebugSection value={settings.data.podDebug} />
+          </>
+        )}
         {settings.data && tab === 'metrics' && <MetricsSection value={settings.data.metrics} />}
         {settings.data && tab === 'audit' && <AuditSinkSection value={settings.data.auditSink} />}
       </div>

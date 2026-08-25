@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -71,6 +72,10 @@ type ListResult struct {
 // Hot kinds come from the informer cache; everything else is listed from the API server
 // on demand. Either way the client receives projections, never raw objects.
 func (s *Service) List(ctx context.Context, cluster *store.Cluster, req ListRequest, impersonate *ImpersonationConfig) (*ListResult, error) {
+	if err := validateNamespaces(req.Namespaces); err != nil {
+		return nil, err
+	}
+
 	cfg, err := s.RESTConfigFor(ctx, cluster, impersonate)
 	if err != nil {
 		return nil, err
@@ -323,6 +328,8 @@ func translateAPIError(err error, resourceType ResourceType) error {
 		return fmt.Errorf("%w: the cluster credential may not list %s", ErrClusterForbidden, resourceType.Resource)
 	case apierrors.IsUnauthorized(err):
 		return fmt.Errorf("%w: the cluster credential was rejected", ErrCredentialRejected)
+	case apierrors.IsBadRequest(err), apierrors.IsInvalid(err), apierrors.IsMethodNotSupported(err):
+		return fmt.Errorf("%w: %s", ErrRequestRejected, apiReason(err))
 	case meta_IsNoMatchError(err):
 		// A kind the cluster does not serve at all, such as Gateway API on a cluster
 		// without those CRDs. Not an error the user caused.
@@ -330,6 +337,18 @@ func translateAPIError(err error, resourceType ResourceType) error {
 	default:
 		return err
 	}
+}
+
+// apiReason is the cluster's own explanation, which is more useful than anything that
+// could be written here.
+func apiReason(err error) string {
+	var status apierrors.APIStatus
+	if errors.As(err, &status) {
+		if message := status.Status().Message; message != "" {
+			return message
+		}
+	}
+	return err.Error()
 }
 
 func meta_IsNoMatchError(err error) bool {

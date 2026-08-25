@@ -1,0 +1,31 @@
+# Attaches a containerised Kubby to the local test clusters.
+#
+# Only needed for development. In a real deployment Kubby reaches its clusters over the
+# ordinary network; here every cluster is itself a set of containers on its own Docker
+# bridge, and bridges are isolated from each other by default. Without this a container
+# on Kubby's own network simply cannot see them, which looks exactly like a bad
+# kubeconfig.
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f deploy/dev/docker-compose.clusters.yml \
+#     --profile full up -d --build
+#
+# The networks are declared external because k3d and minikube create them, not this file.
+# If a cluster is not running, comment its entry out rather than expecting compose to
+# invent it.
+
+services:
+  kubby:
+    networks:
+      # Kubby's own network, for Postgres. Named explicitly because listing any network
+      # replaces the default rather than adding to it.
+      - default
+      - k3d-kubby-test
+      - kubby-mini
+
+networks:
+  k3d-kubby-test:
+    external: true
+  kubby-mini:
+    external: true

@@ -41,6 +41,10 @@ type HTTPConfig struct {
 	TLSKeyFile     string
 	ExtraCABundle  string
 	ReadOnly       bool
+	// MetricsToken lets a scraper reach /metrics without a browser session. Empty means
+	// only a signed-in admin can read it — never unauthenticated: Kubby's own metrics
+	// name every cluster it talks to, which is a map of the estate.
+	MetricsToken string
 }
 
 // TLSEnabled reports whether Kubby terminates TLS itself rather than sitting behind
@@ -92,6 +96,13 @@ type AuthConfig struct {
 	LockoutDurations   []time.Duration
 	MaxLockouts        int
 	RequireMFAForAdmin bool
+	// MFAIssuer is the name an authenticator app shows beside the code.
+	//
+	// A product name, not the hostname it was derived from before: the entry has to stay
+	// recognisable if the deployment moves, and "localhost" is what a hostname gives in
+	// development. Configurable so a team running more than one installation can tell
+	// them apart.
+	MFAIssuer          string
 	LoginRatePerMinute float64
 	LoginRateBurst     int
 	APIRatePerMinute   float64
@@ -134,6 +145,9 @@ func Load() (*Config, error) {
 	cfg.HTTP.TLSKeyFile = os.Getenv("KUBBY_TLS_KEY_FILE")
 	cfg.HTTP.ExtraCABundle = os.Getenv("KUBBY_EXTRA_CA_BUNDLE")
 	cfg.HTTP.TrustedProxies = envList("KUBBY_TRUSTED_PROXIES")
+	cfg.HTTP.MetricsToken = os.Getenv("KUBBY_METRICS_TOKEN")
+
+	cfg.Auth.MFAIssuer = envOr("KUBBY_MFA_ISSUER", "Kubby - MFA")
 
 	// Extra origins for installations reachable under more than one hostname, such as
 	// an internal load-balancer alias. The public URL is always trusted implicitly.

@@ -182,6 +182,9 @@ export const clusterSchema = z.object({
   qpsLimit: z.number(),
   lastValidatedAt: z.string().optional(),
   accessLevel: z.string().optional(),
+  metricsUrl: z.string().optional(),
+  metricsUsername: z.string().optional(),
+  metricsInsecureSkipVerify: z.boolean().default(false),
 })
 export const clustersSchema = z.object({ clusters: z.array(clusterSchema) })
 
@@ -282,6 +285,20 @@ export const workloadOverviewSchema = z.object({
 
 export type WorkloadOverview = z.infer<typeof workloadOverviewSchema>
 
+export const relationSchema = z.object({
+  direction: z.enum(['owner', 'owned', 'serves']),
+  kind: z.string(),
+  typeKey: z.string(),
+  namespace: z.string().optional(),
+  name: z.string(),
+  detail: z.string().optional(),
+  severity: z.string().optional(),
+})
+
+export type Relation = z.infer<typeof relationSchema>
+
+const relationsSchema = z.object({ relations: z.array(relationSchema).nullable() })
+
 // ---------------------------------------------------------------- deployment settings
 
 export const kubbySettingsSchema = z.object({
@@ -291,6 +308,7 @@ export const kubbySettingsSchema = z.object({
     pullSecret: z.string().optional(),
     enabled: z.boolean(),
   }),
+  podDebug: z.object({ image: z.string() }),
   metrics: z.object({
     enabled: z.boolean(),
     url: z.string(),
@@ -308,6 +326,8 @@ export const kubbySettingsSchema = z.object({
     username: z.string().optional(),
     hasToken: z.boolean(),
     insecureSkipVerify: z.boolean(),
+    scheme: z.string().optional(),
+    dataStream: z.boolean().default(false),
   }),
 })
 
@@ -437,6 +457,148 @@ export const containerSchema = z.object({
 export type PodContainer = z.infer<typeof containerSchema>
 
 const containersSchema = z.object({ containers: z.array(containerSchema) })
+
+// ---------------------------------------------------------------- cluster metrics
+
+const pointSchema = z.object({ at: z.string(), value: z.number() })
+
+const clusterHealthMetricsSchema = z.object({
+  cpu: z.array(pointSchema).nullable().optional(),
+  memory: z.array(pointSchema).nullable().optional(),
+  disk: z.array(z.object({ node: z.string(), percent: z.number() })).nullable().optional(),
+  restarts: z.array(pointSchema).nullable().optional(),
+  failing: z
+    .array(
+      z.object({
+        namespace: z.string(),
+        pod: z.string(),
+        container: z.string(),
+        restarts: z.number(),
+        reason: z.string().optional(),
+      }),
+    )
+    .nullable()
+    .optional(),
+  degraded: z
+    .array(
+      z.object({
+        namespace: z.string(),
+        name: z.string(),
+        kind: z.string(),
+        missing: z.number(),
+        forMinutes: z.number(),
+      }),
+    )
+    .nullable()
+    .optional(),
+  nodeIssues: z
+    .array(z.object({ node: z.string(), condition: z.string(), minutes: z.number() }))
+    .nullable()
+    .optional(),
+  pods: z.object({
+    running: z.number(),
+    pending: z.number(),
+    failed: z.number(),
+    succeeded: z.number(),
+    unknown: z.number(),
+  }),
+  nodes: z.object({ ready: z.number(), total: z.number() }),
+  restarts24h: z.number(),
+  cpuByNode: z.array(z.object({ node: z.string(), percent: z.number() })).nullable().optional(),
+  memoryByNode: z.array(z.object({ node: z.string(), percent: z.number() })).nullable().optional(),
+  topCpu: z.array(z.object({ name: z.string(), value: z.number() })).nullable().optional(),
+  topMemory: z.array(z.object({ name: z.string(), value: z.number() })).nullable().optional(),
+  reasons: z.array(z.object({ name: z.string(), value: z.number() })).nullable().optional(),
+  waiting: z.array(z.object({ name: z.string(), value: z.number() })).nullable().optional(),
+  windowMinutes: z.number(),
+  warnings: z.array(z.string()).nullable().optional(),
+})
+
+const clusterMetricsSchema = z.object({
+  configured: z.boolean(),
+  error: z.string().optional(),
+  health: clusterHealthMetricsSchema.optional(),
+})
+
+export type ClusterMetrics = z.infer<typeof clusterMetricsSchema>
+export type ClusterHealthMetrics = z.infer<typeof clusterHealthMetricsSchema>
+export type MetricPoint = z.infer<typeof pointSchema>
+
+// ---------------------------------------------------------------- helm
+
+const helmReleaseSchema = z.object({
+  name: z.string(),
+  namespace: z.string(),
+  revision: z.number(),
+  status: z.string(),
+  chart: z.string().optional(),
+  chartVersion: z.string().optional(),
+  appVersion: z.string().optional(),
+  updated: z.string().optional(),
+  description: z.string().optional(),
+})
+
+const helmReleasesSchema = z.object({ releases: z.array(helmReleaseSchema).nullable().optional() })
+
+const helmDetailSchema = helmReleaseSchema.extend({
+  values: z.record(z.string(), z.unknown()).nullable().optional(),
+  notes: z.string().optional(),
+  history: z.array(helmReleaseSchema).nullable().optional(),
+})
+
+export type HelmRelease = z.infer<typeof helmReleaseSchema>
+export type HelmReleaseDetail = z.infer<typeof helmDetailSchema>
+
+// ---------------------------------------------------------------- global search
+
+const searchHitSchema = z.object({
+  clusterId: z.string(),
+  clusterName: z.string(),
+  environment: z.string(),
+  typeKey: z.string(),
+  kind: z.string(),
+  namespace: z.string().optional(),
+  name: z.string(),
+  status: z.string().optional(),
+  severity: z.string().optional(),
+  age: z.string().optional(),
+})
+
+const searchResultSchema = z.object({
+  hits: z.array(searchHitSchema).nullable().optional(),
+  unreachable: z
+    .array(z.object({ clusterId: z.string(), clusterName: z.string(), reason: z.string() }))
+    .nullable()
+    .optional(),
+  truncated: z.boolean().default(false),
+})
+
+export type SearchHit = z.infer<typeof searchHitSchema>
+export type SearchResult = z.infer<typeof searchResultSchema>
+
+const portOptionSchema = z.object({
+  name: z.string().optional(),
+  port: z.number(),
+  protocol: z.string(),
+  container: z.string().optional(),
+})
+const portsSchema = z.object({ ports: z.array(portOptionSchema) })
+
+const forwardSchema = z.object({
+  id: z.string(),
+  clusterId: z.string(),
+  type: z.string(),
+  namespace: z.string(),
+  name: z.string(),
+  pod: z.string(),
+  port: z.number(),
+  url: z.string(),
+  startedAt: z.string(),
+})
+const forwardsSchema = z.object({ forwards: z.array(forwardSchema) })
+
+export type PortOption = z.infer<typeof portOptionSchema>
+export type Forward = z.infer<typeof forwardSchema>
 
 const terminationSchema = z.object({
   reason: z.string().optional(),
@@ -590,6 +752,11 @@ export const api = {
       readOnly?: boolean
       impersonationEnabled?: boolean
       qpsLimit?: number
+      metricsUrl?: string
+      metricsUsername?: string
+      metricsInsecureSkipVerify?: boolean
+      metricsPassword?: string
+      clearMetricsPassword?: boolean
     },
   ) => request(`/api/v1/clusters/${id}`, clusterSchema, { method: 'PATCH', body }),
   replaceCredential: (id: string, body: { kubeconfig: string; contextName?: string }) =>
@@ -647,6 +814,9 @@ export const api = {
   saveNodeShell: (body: KubbySettings['nodeShell']) =>
     request('/api/v1/settings/node-shell', kubbySettingsSchema, { method: 'PUT', body }),
 
+  savePodDebug: (body: KubbySettings['podDebug']) =>
+    request('/api/v1/settings/pod-debug', kubbySettingsSchema, { method: 'PUT', body }),
+
   saveMetrics: (body: KubbySettings['metrics'] & { password?: string; clearPassword?: boolean }) =>
     request('/api/v1/settings/metrics', kubbySettingsSchema, { method: 'PUT', body }),
 
@@ -676,12 +846,73 @@ export const api = {
       { signal },
     ),
 
+  helmReleases: (clusterId: string, namespace = '', signal?: AbortSignal) => {
+    const suffix = namespace ? `?namespace=${encodeURIComponent(namespace)}` : ''
+    return request(`/api/v1/clusters/${clusterId}/helm-releases${suffix}`, helmReleasesSchema, { signal })
+  },
+
+  helmRelease: (clusterId: string, namespace: string, name: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/helm-releases/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`,
+      helmDetailSchema,
+      { signal },
+    ),
+
+  search: (query: string, signal?: AbortSignal) =>
+    request(`/api/v1/search?q=${encodeURIComponent(query)}`, searchResultSchema, { signal }),
+
+  clusterMetrics: (clusterId: string, window: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/metrics?window=${encodeURIComponent(window)}`,
+      clusterMetricsSchema,
+      { signal },
+    ),
+
+  forwardablePorts: (
+    clusterId: string,
+    typeKey: string,
+    namespace: string,
+    name: string,
+    signal?: AbortSignal,
+  ) =>
+    request(
+      `/api/v1/clusters/${clusterId}/ports/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}` +
+        `?type=${encodeURIComponent(typeKey)}`,
+      portsSchema,
+      { signal },
+    ),
+
+  forwards: (clusterId: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${clusterId}/forwards`, forwardsSchema, { signal }),
+
+  startForward: (
+    clusterId: string,
+    body: { type: string; namespace: string; name: string; port: number },
+  ) => request(`/api/v1/clusters/${clusterId}/forwards`, forwardSchema, { method: 'POST', body }),
+
+  stopForward: (forwardId: string) =>
+    request(`/api/v1/forwards/${forwardId}`, emptySchema, { method: 'DELETE' }),
+
   podRestarts: (clusterId: string, namespace: string, name: string, signal?: AbortSignal) =>
     request(
       `/api/v1/clusters/${clusterId}/pod/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/restarts`,
       restartSummarySchema,
       { signal },
     ),
+
+  relations: (
+    clusterId: string,
+    typeKey: string,
+    params: { name: string; namespace?: string },
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams({ name: params.name })
+    if (params.namespace) query.set('namespace', params.namespace)
+
+    return request(`/api/v1/clusters/${clusterId}/relations/${typeKey}?${query}`, relationsSchema, {
+      signal,
+    })
+  },
 
   describe: (
     clusterId: string,

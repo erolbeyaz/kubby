@@ -1,0 +1,58 @@
+# Prometheus for the local test clusters.
+#
+# Deliberately lean: Kubby reads Prometheus over its HTTP API, so Grafana, Alertmanager
+# and the pushgateway would only cost memory on a laptop already running two clusters.
+# What is kept is what Kubby cannot get from the Kubernetes API itself — history.
+#
+#   kube-state-metrics  object state over time: restarts, phases, unavailable replicas
+#   node-exporter       what the node itself is doing, not what the pods asked for
+#   kubelet / cAdvisor  per-container CPU, memory and OOM kills
+#
+# Install:
+#   helm --kube-context kubby-mini upgrade --install prometheus \
+#     prometheus-community/prometheus --version 29.27.0 \
+#     -n monitoring --create-namespace -f deploy/dev/prometheus-values.yaml
+
+alertmanager:
+  enabled: false
+prometheus-pushgateway:
+  enabled: false
+
+kube-state-metrics:
+  enabled: true
+  resources:
+    requests: { cpu: 10m, memory: 48Mi }
+    limits: { memory: 192Mi }
+
+prometheus-node-exporter:
+  enabled: true
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits: { memory: 96Mi }
+
+server:
+  # Kubby runs outside these clusters during development, so the API has to be reachable
+  # from the host rather than only from inside.
+  service:
+    type: NodePort
+    nodePort: 30090
+    servicePort: 80
+
+  # A day is enough to see a trend and short enough to stay in memory on a laptop. A real
+  # deployment would keep far more; this is a test rig.
+  retention: 24h
+
+  # emptyDir rather than a volume: minikube's provisioner hands out hostPath volumes, and
+  # kubelet does not apply fsGroup to those — Prometheus runs as 65534 and cannot write
+  # to a directory the provisioner created as root. Losing a day of samples when the pod
+  # restarts is the right trade on a test rig; a real deployment keeps the volume.
+  persistentVolume:
+    enabled: false
+
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+  global:
+    scrape_interval: 30s
+    evaluation_interval: 30s

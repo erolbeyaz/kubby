@@ -1,0 +1,165 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubby.fullname" . }}
+  labels: {{- include "kubby.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{- include "kubby.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubby.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "kubby.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+
+      # Kubby holds one identity for itself; nothing in the pod reads the API from a
+      # mounted token unless in-cluster access was deliberately turned on.
+      automountServiceAccountToken: {{ .Values.inCluster.enabled }}
+
+      containers:
+        - name: kubby
+          image: {{ include "kubby.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          env:
+            - name: KUBBY_HTTP_ADDR
+              value: ":8080"
+            - name: KUBBY_PUBLIC_URL
+              value: {{ .Values.config.publicUrl | quote }}
+            - name: KUBBY_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: KUBBY_READ_ONLY
+              value: {{ .Values.config.readOnly | quote }}
+            - name: KUBBY_MFA_ISSUER
+              value: {{ .Values.config.mfaIssuer | quote }}
+            - name: KUBBY_REQUIRE_MFA_FOR_ADMIN
+              value: {{ .Values.config.requireMfaForAdmin | quote }}
+            {{- with .Values.config.trustedProxies }}
+            - name: KUBBY_TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.config.allowedOrigins }}
+            - name: KUBBY_ALLOWED_ORIGINS
+              value: {{ join "," . | quote }}
+            {{- end }}
+
+            - name: KUBBY_DB_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: KUBBY_DB_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: KUBBY_DB_NAME
+              value: {{ .Values.database.name | quote }}
+            - name: KUBBY_DB_USER
+              value: {{ .Values.database.user | quote }}
+            - name: KUBBY_DB_SSLMODE
+              value: {{ .Values.database.sslMode | quote }}
+            - name: KUBBY_DB_MAX_CONNS
+              value: {{ .Values.database.maxConns | quote }}
+
+            # Read from a Secret, never from a value: anything in values.yaml is in Helm's
+            # release history, in whatever repository holds the values file, and in
+            # `helm get values` for anyone who can run it.
+            - name: KUBBY_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubby.secretName" . }}
+                  key: {{ .Values.secrets.dbPasswordKey }}
+            - name: KUBBY_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubby.secretName" . }}
+                  key: {{ .Values.secrets.encryptionKeyKey }}
+            {{- if .Values.config.metricsToken }}
+            - name: KUBBY_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubby.secretName" . }}
+                  key: metrics-token
+            {{- end }}
+            {{- if .Values.inCluster.enabled }}
+            - name: KUBBY_ALLOW_IN_CLUSTER
+              value: "true"
+            {{- end }}
+
+          # Liveness asks only whether the process is alive; it deliberately does not
+          # touch the database, because restarting a healthy Kubby over a database blip
+          # turns one outage into two (ADR-102).
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Readiness does, and checks the schema as well: a database that answers a ping
+          # but has no tables is reachable, not usable (ADR-106).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Migrations run at start, and a large one is slow. Without this the pod would
+          # be killed part-way through, which is the worst moment for it.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+
+          volumeMounts:
+            # The root filesystem is read-only. The terminal writes a per-session
+            # kubeconfig and any files dropped into it, so /tmp is memory: nothing a
+            # session wrote outlives it, and nothing reaches a disk.
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      # Long enough for open log streams, terminals and port forwards to end rather than
+      # be cut mid-sentence.
+      terminationGracePeriodSeconds: 30
