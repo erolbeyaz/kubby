@@ -72,3 +72,9 @@ docker-compose.override.yml
 *~
 .DS_Store
 Thumbs.db
+
+# --- Çalışma dokümanları: depoda tutulur, yayımlanmaz ---
+# Proje hafızası ve oturum protokolü. Yerelde kalır, GitHub'a gitmez.
+CLAUDE.md
+.claude/
+docs/

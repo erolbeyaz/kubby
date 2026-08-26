@@ -11,14 +11,15 @@ network.
 [![CI](https://github.com/erolbeyaz/kubby/actions/workflows/ci.yml/badge.svg)](https://github.com/erolbeyaz/kubby/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Status: 0.9.0, first packaged release.** It runs, it is tested and it is deployable by
-> Helm or Compose. Read the **[residual risks](docs/SECURITY.md#kalan-riskler)** before you
-> point it at a production cluster.
+> **Status: 0.10.0, packaged and published.** It runs, it is tested, and it installs from
+> a published image with Helm or Compose. It has not yet been run against an
+> RKE2/Rancher-class cluster in anger — read the known limits below before you point it
+> at a production one.
 
-<!-- Screenshots: drop PNGs into docs/images/ and uncomment.
-![Health panel](docs/images/health.png)
-![Workloads](docs/images/workloads.png)
-![Cluster terminal](docs/images/terminal.png)
+<!-- Screenshots: drop PNGs into .github/images/ and uncomment.
+![Health panel](.github/images/health.png)
+![Workloads](.github/images/workloads.png)
+![Cluster terminal](.github/images/terminal.png)
 -->
 
 ---
@@ -59,8 +60,8 @@ switch, role, per-cluster grant, per-cluster read-only lock — and then the clu
 read-only root filesystem. CI fails the build on `trivy`, `semgrep`, `gitleaks`,
 `npm audit` or `govulncheck` findings.
 
-What it does **not** protect against is written down just as plainly:
-**[docs/SECURITY.md](docs/SECURITY.md)**.
+What it does **not** protect against is written down just as plainly, under
+[Known limits](#known-limits).
 
 ---
 
@@ -168,8 +169,8 @@ curl -fsS http://localhost:8080/readyz      # database reachable AND schema curr
 
 ## Configuration
 
-Everything is environment variables; `deploy/compose/.env.example` and
-`.env.example` document all of them, and `docs/ARCHITECTURE.md` explains each one.
+Everything is environment variables. `deploy/compose/.env.published.example` and
+`.env.example` document all of them, each with what it is for.
 
 The ones that matter most:
 
@@ -205,15 +206,13 @@ is additive and never overwrites what is already there.
 
 ## Developing
 
-Contributions and forks are welcome. The project documentation in `docs/` is **written in
-Turkish**; all code, comments, identifiers, commit messages, API fields and UI text are
-**English**, and that split is intentional.
+Contributions and forks are welcome. All code, comments, identifiers, commit messages,
+API fields and UI text are **English**.
 
 ### Prerequisites
 
-Go 1.27, Node.js 24 LTS, Docker, and `make`. Versions are pinned on purpose — see
-[ADR-025](docs/DECISIONS.md); please do not bump a dependency in a PR without raising it
-first.
+Go 1.27, Node.js 24 LTS, Docker, and `make`. Versions are pinned on purpose; please do
+not bump a dependency in a PR without raising it first.
 
 ```bash
 git clone https://github.com/erolbeyaz/kubby.git
@@ -277,24 +276,14 @@ web/src/                    React frontend
 deploy/helm/kubby/          Helm chart
 deploy/compose/             production Compose stack
 deploy/dev/                 local test clusters and their Prometheus values
-docs/                       see below
 ```
 
-### Documentation map
+Release history is in [`CHANGELOG.md`](CHANGELOG.md).
 
-| File | What is in it |
-|---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System and data model, API, environment variables |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | The ADR log — **read this before proposing a redesign** |
-| [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) | Code style, tests, commits, branches |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, mitigations, residual risks |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phase plan and its completion criteria |
-| [`docs/STATE.md`](docs/STATE.md) | Where the work currently stands |
-| [`CHANGELOG.md`](CHANGELOG.md) | Release history |
-
-Most surprising-looking decisions have an ADR explaining them. If something reads as
-wrong, `docs/DECISIONS.md` probably says why it is that way — and if it does not, that is
-worth an issue.
+Most surprising-looking decisions were argued out before they were made, and the reasoning
+usually survives as a comment next to the code rather than in a separate document. If
+something reads as wrong, the comment above it is the first place to look — and if there
+is no comment, that is worth an issue.
 
 ### House rules for a pull request
 
@@ -314,7 +303,10 @@ worth an issue.
 - **No OIDC.** Identities are local accounts; the `AuthProvider` abstraction exists, an
   implementation does not
 - **Logs are Pod-only**
-- The cluster terminal carries the cluster's credential — [SECURITY.md §1](docs/SECURITY.md)
+- **The cluster terminal carries the cluster's credential.** Anyone who can open one can
+  extract it and use it outside Kubby, unlogged. It is limited by refusing a terminal
+  wherever writing is refused; the proper fix — a per-session API proxy with a
+  short-lived token valid only there — is not built
 - The Helm chart was verified on minikube, not yet on an RKE2/Rancher-class cluster
 
 ## Reporting a vulnerability

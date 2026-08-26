@@ -75,7 +75,7 @@ Cluster Overview'ın tamamı ve verilen tasarıma göre ikinci bir overview ekra
 
 ### Overview 2
 
-- Verilen tasarıma göre ikinci bir ekran (`docs/DASHBOARD.md` şartnamesinin bir uygulaması)
+- Verilen tasarıma göre ikinci bir ekran
 - Düzen tasarımın, renkler Kubby'nin
 - **Lucide ikonları** projeye gömüldü — CDN yok, kaynak içinde (ISC, `NOTICE`)
 
@@ -94,7 +94,7 @@ Cluster Overview'ın tamamı ve verilen tasarıma göre ikinci bir overview ekra
 ## 0.9.0 — 2026-08-25
 
 İlk paketlenmiş sürüm. Dokuz faz tamamlandı; Faz 10 (sertleştirme ve yayın) bu sürümle
-kapandı. Üretimde kullanılmadan önce `docs/SECURITY.md`'deki **kalan riskler** okunmalıdır.
+kapandı. Üretimde kullanılmadan önce README'deki **Known limits** bölümü okunmalıdır.
 
 ### Kurulum
 
@@ -147,8 +147,8 @@ Faz 10'un güvenlik geçişinde bulundu:
 - Tek replika hedeflenir (ADR-016)
 - OIDC yok; kimlik yerel hesaplardır
 - Loglar yalnızca Pod içindir
-- Terminal cluster'ın kimlik bilgisini taşır — `docs/SECURITY.md` §1
-- `monaco-editor` bağımlılığında orta seviye bir XSS danışmanlığı — `docs/SECURITY.md` §4
+- Terminal cluster'ın kimlik bilgisini taşır
+- `monaco-editor` bağımlılığında orta seviye bir XSS danışmanlığı
 
 ---
 

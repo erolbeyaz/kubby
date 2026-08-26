@@ -89,7 +89,7 @@ gen-key: ## Generate a KUBBY_ENCRYPTION_KEY (copy the output into .env)
 	@echo "KUBBY_ENCRYPTION_KEY=$$(openssl rand -base64 32)"
 
 .PHONY: rotate-key
-rotate-key: ## Rewrap stored secrets under a new key (see docs/ARCHITECTURE.md)
+rotate-key: ## Rewrap every stored secret under a new key (dry-run first with DRY_RUN=1)
 	@# Set KUBBY_ENCRYPTION_KEY to the new key, KUBBY_ENCRYPTION_KEY_PREVIOUS to the
 	@# current one, and raise KUBBY_ENCRYPTION_KEY_VERSION. Add -dry-run to rehearse.
 	@$(with_env) cd $(SERVER_DIR) && go run ./cmd/kubby-rotate-key $(ARGS)
