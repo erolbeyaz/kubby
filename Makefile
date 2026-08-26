@@ -15,6 +15,11 @@ GOLANGCI_VERSION := v2.13.1
 VERSION    ?= dev
 # Marked dirty when the tree has uncommitted changes, so an image never claims to be a
 # commit it is not built from.
+#
+# This goes INTO the image, not onto it. Images used to carry a second tag named after
+# the commit, which answered a question the image already answers itself — /version
+# reports the commit, and a digest pins a build far better than a hex string can. All it
+# added was a registry full of tags nobody reads.
 COMMIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo -dirty)
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG        := github.com/erolbeyaz/kubby/internal/httpapi
@@ -206,9 +211,8 @@ docker: ## Build the container image (override REGISTRY / IMAGE_REPO for your re
 		--build-arg VERSION=$(VERSION) \
 		--build-arg COMMIT_SHA=$(COMMIT_SHA) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		-t $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) \
-		-t $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(COMMIT_SHA) .
-	@echo "Built $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) and :$(COMMIT_SHA)"
+		-t $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) .
+	@echo "Built $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG) ($(COMMIT_SHA))"
 
 .PHONY: config-export
 config-export: ## Export clusters, users, grants and settings to an encrypted archive
@@ -309,9 +313,8 @@ docker-verify: ## Check the built image is what it claims: right tools, right us
 	@echo "OK — tools present, runs as 65532, no shell"
 
 .PHONY: docker-push
-docker-push: ## Push both tags (authenticate with `docker login` first)
+docker-push: ## Push the built image (authenticate with `docker login` first)
 	docker push $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(TAG)
-	docker push $(REGISTRY)/$(IMAGE_REPO):$(COMMIT_SHA)
 
 ## ---------------------------------------------------------------- quality
 
