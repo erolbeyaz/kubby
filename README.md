@@ -1,4 +1,5 @@
-# Kubby
+<img width="1024" height="357" alt="kubby-logo-horizontal-no-tagline-dark-1024w" src="https://github.com/user-attachments/assets/5f421ebe-a9f4-4b53-a730-42b331725e28" />
+
 
 A browser-based, multi-cluster **Kubernetes management and observation UI** — a Lens or
 Rancher equivalent that runs on your own infrastructure.
@@ -149,6 +150,7 @@ To let Kubby manage the cluster it runs in, using its own ServiceAccount:
 ```
 
 ### First run
+<img width="2559" height="1267" alt="image" src="https://github.com/user-attachments/assets/03082139-d9b1-40b9-916d-ea72cd1dd76b" />
 
 Kubby **creates its own schema at startup** — there is no separate migration step, and
 upgrading is a tag change. The first browser visit asks you to create the first
@@ -278,12 +280,6 @@ deploy/compose/             production Compose stack
 deploy/dev/                 local test clusters and their Prometheus values
 ```
 
-Release history is in [`CHANGELOG.md`](CHANGELOG.md).
-
-Most surprising-looking decisions were argued out before they were made, and the reasoning
-usually survives as a comment next to the code rather than in a separate document. If
-something reads as wrong, the comment above it is the first place to look — and if there
-is no comment, that is worth an issue.
 
 ### House rules for a pull request
 
@@ -295,19 +291,6 @@ is no comment, that is worth an issue.
 - Authorization is enforced on the server, on every request — hiding a control in the UI
   is decoration, not authorization
 
----
-
-## Known limits
-
-- **Single replica by design** (ADR-016). Sessions and informer caches live in process memory
-- **No OIDC.** Identities are local accounts; the `AuthProvider` abstraction exists, an
-  implementation does not
-- **Logs are Pod-only**
-- **The cluster terminal carries the cluster's credential.** Anyone who can open one can
-  extract it and use it outside Kubby, unlogged. It is limited by refusing a terminal
-  wherever writing is refused; the proper fix — a per-session API proxy with a
-  short-lived token valid only there — is not built
-- The Helm chart was verified on minikube, not yet on an RKE2/Rancher-class cluster
 
 ## Reporting a vulnerability
 
