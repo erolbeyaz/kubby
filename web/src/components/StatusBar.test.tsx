@@ -22,20 +22,13 @@ describe('StatusBar', () => {
     expect(slot?.className).toContain('left-1/2')
   })
 
-  // A flourish, not a control: it must never take a click meant for the strip beneath it.
-  it('carries a monogram that never takes the pointer', () => {
+  // The monogram that used to appear above the signature on hover was removed: the
+  // signature already says who made this, and a second mark on the same three pixels
+  // was one flourish too many.
+  it('carries no monogram', () => {
     render(<StatusBar connection="ready" version={undefined} />)
 
     const mark = screen.getByAltText('powered by erolbeyaz')
-    const monogram = mark.parentElement?.querySelector('.monogram')
-
-    expect(monogram).toBeTruthy()
-    // Decorative, so it is hidden from anyone reading the page rather than announced,
-    // and it carries no alternative text to read out.
-    expect(monogram).toHaveAttribute('aria-hidden', 'true')
-    expect(monogram).toHaveAttribute('alt', '')
-    // Whether it takes the pointer is decided in the stylesheet, which jsdom does not
-    // load; the class is what carries that rule.
-    expect(monogram?.className).toContain('monogram')
+    expect(mark.parentElement?.querySelector('.monogram')).toBeNull()
   })
 })

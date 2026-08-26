@@ -1,7 +1,10 @@
 # --- Secrets: asla commit edilmez ---
 .env
 .env.*
-!.env.example
+# Every *.example is a template with no real values in it. The wildcard has to cover
+# them all: `!.env.example` alone let `.env.published.example` fall back through `.env.*`
+# and quietly stay untracked.
+!.env*.example
 *.pem
 *.key
 *.crt

@@ -37,6 +37,21 @@ rules:
       - limitranges
     verbs: [get, list, watch]
 
+  # Reaching this cluster's own Prometheus, which Kubby finds rather than being told
+  # about. The API server's service proxy is the only route that works without a
+  # NodePort, an ingress, or a path from Kubby's network to the pod network.
+  #
+  # `create` because a PromQL query is a POST: an expression is easily longer than the
+  # URL length some proxies accept. It is still a read — Prometheus has no write API
+  # here — but the API server authorises the proxy by HTTP method, not by intent.
+  #
+  # Narrow on purpose: services/proxy reaches any Service in the cluster, so it is listed
+  # by itself rather than folded into the read block above, where it would be easy to
+  # miss in review.
+  - apiGroups: [""]
+    resources: [services/proxy]
+    verbs: [get, create]
+
   # Secrets are read separately and deliberately: revealing one is an audited act
   # (ADR-057), and keeping the grant on its own line makes it visible in review.
   - apiGroups: [""]

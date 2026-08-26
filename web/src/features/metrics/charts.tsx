@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
+
+import { DISPLAY_TIMEZONE, formatClock } from '@/lib/time'
 
 /**
  * The dashboard's drawing primitives.
@@ -72,11 +74,19 @@ export function Donut({
   total,
   centreLabel,
   size = 132,
+  onSelect,
+  selected,
+  detailFor,
 }: {
   slices: Slice[]
   total?: number
   centreLabel?: string
   size?: number
+  /** Makes the ring interactive: a slice and its legend row become buttons. */
+  onSelect?: (name: string) => void
+  selected?: string | null | undefined
+  /** Rendered under the selected legend row — the things behind that slice. */
+  detailFor?: (name: string) => ReactNode
 }) {
   const sum = total ?? slices.reduce((acc, slice) => acc + slice.value, 0)
 
@@ -104,6 +114,8 @@ export function Donut({
           const dash = `${Math.max(fraction * circumference - 2, 0)} ${circumference}`
           const rotation = ((startAt[index] ?? 0) / sum) * 360 - 90
 
+          const open = selected === slice.name
+
           return (
             <circle
               key={slice.name}
@@ -112,9 +124,29 @@ export function Donut({
               r={radius}
               fill="none"
               stroke={slice.colour}
-              strokeWidth="22"
+              // The selected slice thickens rather than changing colour: colour already
+              // means which slice this is, and overloading it would say two things at once.
+              strokeWidth={open ? 28 : 22}
               strokeDasharray={dash}
               transform={`rotate(${rotation} 70 70)`}
+              // The ring is the thing people point at. Leaving it inert and making only
+              // the label beside it clickable puts the target somewhere nobody aims.
+              {...(onSelect
+                ? {
+                    role: 'button',
+                    tabIndex: 0,
+                    'aria-expanded': open,
+                    'aria-label': `${slice.name}: ${format(slice.value)}`,
+                    style: { cursor: 'pointer' },
+                    onClick: () => onSelect(open ? '' : slice.name),
+                    onKeyDown: (event: KeyboardEvent<SVGCircleElement>) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onSelect(open ? '' : slice.name)
+                      }
+                    },
+                  }
+                : {})}
             >
               <title>{`${slice.name}: ${format(slice.value)}`}</title>
             </circle>
@@ -143,28 +175,49 @@ export function Donut({
       </svg>
 
       <ul className="min-w-0 flex-1">
-        {slices.map((slice) => (
-          <li
-            key={slice.name}
-            className="flex items-center gap-2 py-0.5"
-            style={{ fontSize: 'var(--text-micro)' }}
-          >
-            <span
-              aria-hidden="true"
-              className="h-2 w-2 shrink-0"
-              style={{ backgroundColor: slice.colour, borderRadius: 1 }}
-            />
-            <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>
-              {slice.name}
-            </span>
-            <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-              {format(slice.value)}
-            </span>
-            <span className="w-10 text-right font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
-              {((slice.value / sum) * 100).toFixed(1)}%
-            </span>
-          </li>
-        ))}
+        {slices.map((slice) => {
+          const open = selected === slice.name
+          const row = (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 shrink-0"
+                style={{ backgroundColor: slice.colour, borderRadius: 1 }}
+              />
+              <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--text-secondary)' }}>
+                {slice.name}
+              </span>
+              <span className="font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                {format(slice.value)}
+              </span>
+              <span
+                className="w-10 text-right font-mono tabular-nums"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                {((slice.value / sum) * 100).toFixed(1)}%
+              </span>
+            </>
+          )
+
+          return (
+            <li key={slice.name} style={{ fontSize: 'var(--text-micro)' }}>
+              {onSelect ? (
+                <button
+                  type="button"
+                  onClick={() => onSelect(open ? '' : slice.name)}
+                  aria-expanded={open}
+                  className="flex w-full items-center gap-2 py-0.5 text-left"
+                  style={{ color: open ? 'var(--text-primary)' : undefined }}
+                >
+                  {row}
+                </button>
+              ) : (
+                <span className="flex items-center gap-2 py-0.5">{row}</span>
+              )}
+              {open && detailFor && <div className="pb-1 pl-4">{detailFor(slice.name)}</div>}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )
@@ -287,13 +340,33 @@ export interface AreaSeries {
  * this normal" in a way the line alone cannot, and reading them off a chart by eye is
  * exactly the work this is meant to save.
  */
-export function AreaChart({ series, unit = '', height = 150 }: { series: AreaSeries[]; unit?: string; height?: number }) {
+export function AreaChart({
+  series,
+  unit = '',
+  height = 150,
+  render,
+}: {
+  series: AreaSeries[]
+  unit?: string
+  height?: number
+  /** For a chart whose numbers are not plain counts — bytes, seconds, a rate. */
+  render?: ((value: number) => string) | undefined
+}) {
+  const show = (value: number) => (render ? render(value) : `${format(value)}${unit}`)
+
   const drawn = series.filter((line) => line.points.length >= 2)
   if (drawn.length === 0) return <Empty>not enough history yet</Empty>
 
   const everyValue = drawn.flatMap((line) => line.points.map((point) => point.value))
   const top = Math.max(...everyValue, 1) * 1.1
   const width = 100
+
+  // Read off the longest line: every series here comes from the same query range, and a
+  // shorter one is a target that started late rather than a different window.
+  const axis = drawn.reduce((longest, line) =>
+    line.points.length > longest.points.length ? line : longest,
+  ).points
+  const ticks = axisTicks(axis)
 
   return (
     <div>
@@ -339,6 +412,20 @@ export function AreaChart({ series, unit = '', height = 150 }: { series: AreaSer
         })}
       </svg>
 
+      {/* When. A line with no axis says "something changed" without saying when, which is
+          the half that separates a rollout from an outage. Three ticks rather than a
+          crowded row: the ends bound the window and the middle gives it a scale.
+          Server time is UTC (ADR-026); the conversion happens here, once. */}
+      <span
+        className="mt-1 flex justify-between font-mono"
+        style={{ fontSize: '10px', color: 'var(--text-muted)' }}
+        title={`times in ${DISPLAY_TIMEZONE}`}
+      >
+        {ticks.map((tick, index) => (
+          <span key={`${tick}-${index}`}>{tick}</span>
+        ))}
+      </span>
+
       <table className="mt-2 w-full" style={{ fontSize: '11px' }}>
         <thead>
           <tr style={{ color: 'var(--text-muted)' }}>
@@ -364,16 +451,13 @@ export function AreaChart({ series, unit = '', height = 150 }: { series: AreaSer
                   </span>
                 </td>
                 <td className="text-right font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                  {format(Math.min(...values))}
-                  {unit}
+                  {show(Math.min(...values))}
                 </td>
                 <td className="text-right font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                  {format(Math.max(...values))}
-                  {unit}
+                  {show(Math.max(...values))}
                 </td>
                 <td className="text-right font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                  {format(values[values.length - 1] ?? 0)}
-                  {unit}
+                  {show(values[values.length - 1] ?? 0)}
                 </td>
               </tr>
             )
@@ -382,6 +466,25 @@ export function AreaChart({ series, unit = '', height = 150 }: { series: AreaSer
       </table>
     </div>
   )
+}
+
+/**
+ * Start, middle and end. The window a chart covers is written on it rather than only in
+ * the panel's heading, because the heading is gone as soon as the reader scrolls.
+ */
+function axisTicks(points: Array<{ at: string }>): string[] {
+  if (points.length === 0) return []
+
+  const first = points[0]?.at ?? ''
+  const last = points[points.length - 1]?.at ?? ''
+  const middle = points[Math.floor((points.length - 1) / 2)]?.at ?? ''
+
+  // A window that crosses midnight needs the date, or 22:00 and 02:00 leave the reader
+  // working out which of them is yesterday.
+  const spansDays =
+    new Date(last).getTime() - new Date(first).getTime() > 20 * 60 * 60 * 1000
+
+  return [formatClock(first, spansDays), formatClock(middle, spansDays), formatClock(last, spansDays)]
 }
 
 export function Empty({ children }: { children: ReactNode }) {

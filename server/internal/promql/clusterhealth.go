@@ -2,6 +2,7 @@ package promql
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -55,6 +56,45 @@ type ClusterHealth struct {
 	Reasons []NamedValue `json:"reasons"`
 	Waiting []NamedValue `json:"waiting"`
 
+	// Summary is the top row of the Cluster Overview: the verdict and the ten numbers
+	// behind it, each of which says whether it could be read at all.
+	Summary ClusterSummary `json:"summary"`
+
+	// Nodes is one card per machine, and Capacity is those cards added up.
+	NodeDetails []NodeDetail `json:"nodeDetails"`
+	Capacity    Capacity     `json:"capacity"`
+
+	// Problems is every object that is wrong, in one list: the first question is "what is
+	// broken", not "what kind of broken thing would I like to look at".
+	Problems []Finding `json:"problems"`
+	// PodProblems is the problem table: every pod that is wrong, with what it was using
+	// against what it asked for.
+	PodProblems []PodProblem `json:"podProblems"`
+	// StorageProblems is the claims and volumes that are not doing their job.
+	StorageProblems []StorageProblem `json:"storageProblems"`
+
+	// Workloads is the replica tables — Deployment, StatefulSet, DaemonSet together.
+	Workloads []WorkloadRow `json:"workloads"`
+	// Alerts is what this cluster's own Prometheus is firing.
+	Alerts []Alert `json:"alerts"`
+	// ControlPlane is row 7, and is mostly N/A on clusters that do not scrape it.
+	ControlPlane ControlPlane `json:"controlPlane"`
+	// NamespaceUsage is who is actually consuming the cluster.
+	NamespaceUsage []NamespaceUsage `json:"namespaceUsage"`
+	// Spread is the same pods counted per node, so an uneven placement is visible.
+	Spread []Spread `json:"spread"`
+	// Trends carries the per-node lines that only mean something over time.
+	Trends Trends `json:"trends"`
+	// Extras is everything that did not fit the shapes above: throttling, exit codes,
+	// autoscalers, services with nothing behind them, and the readings that only exist
+	// when somebody instrumented for them.
+	Extras Extras `json:"extras"`
+
+	// Stuck and Died name the containers behind the two rings, so a reader can open one
+	// instead of going to look for it.
+	Stuck []ContainerIssue `json:"stuck"`
+	Died  []ContainerIssue `json:"died"`
+
 	// Window is the period the series cover.
 	WindowMinutes int `json:"windowMinutes"`
 	// Warnings names what could not be read, so a partial panel never passes as complete.
@@ -75,15 +115,20 @@ type NamedValue struct {
 // PodTotals is the phase breakdown, which is the fastest read of whether anything is
 // wrong: everything Running is a quiet cluster.
 type PodTotals struct {
-	Running   float64 `json:"running"`
-	Pending   float64 `json:"pending"`
-	Failed    float64 `json:"failed"`
-	Succeeded float64 `json:"succeeded"`
-	Unknown   float64 `json:"unknown"`
+	Running float64 `json:"running"`
+	// Pending is a pod waiting to be placed or still starting. A pod held back by a
+	// container that will not start is in phase Pending too, and is counted in
+	// NotStarting instead — under one name, on one row, so the tile and the table below
+	// it cannot disagree about the same pod.
+	Pending     float64 `json:"pending"`
+	NotStarting float64 `json:"notStarting"`
+	Failed      float64 `json:"failed"`
+	Succeeded   float64 `json:"succeeded"`
+	Unknown     float64 `json:"unknown"`
 }
 
 func (p PodTotals) Total() float64 {
-	return p.Running + p.Pending + p.Failed + p.Succeeded + p.Unknown
+	return p.Running + p.Pending + p.NotStarting + p.Failed + p.Succeeded + p.Unknown
 }
 
 type NodeTotals struct {
@@ -246,12 +291,22 @@ func ReadClusterHealth(ctx context.Context, client *Client, window time.Duration
 		if err != nil {
 			return err
 		}
+		// Split out of Pending rather than added to it: these pods were placed and then
+		// stopped by their own containers, and the fix is an image or a config, not room
+		// in the cluster.
+		stuck, err := client.Query(ctx, queryPodsNotStarting)
+		if err == nil {
+			out.Pods.NotStarting = firstValue(stuck)
+		}
 		for _, sample := range samples {
 			switch sample.Labels["phase"] {
 			case "Running":
 				out.Pods.Running = sample.Value
 			case "Pending":
-				out.Pods.Pending = sample.Value
+				out.Pods.Pending = sample.Value - out.Pods.NotStarting
+				if out.Pods.Pending < 0 {
+					out.Pods.Pending = 0
+				}
 			case "Failed":
 				out.Pods.Failed = sample.Value
 			case "Succeeded":
@@ -281,7 +336,7 @@ func ReadClusterHealth(ctx context.Context, client *Client, window time.Duration
 		if err != nil {
 			return err
 		}
-		out.Restarts24h = firstValue(samples)
+		out.Restarts24h = math.Round(firstValue(samples))
 		return nil
 	})
 
@@ -327,6 +382,77 @@ func ReadClusterHealth(ctx context.Context, client *Client, window time.Duration
 			return err
 		}
 		out.Reasons = values
+		return nil
+	})
+
+	run("problems", func() error {
+		out.Problems = readProblems(ctx, client)
+		return nil
+	})
+
+	run("pod problems", func() error {
+		out.PodProblems = readPodProblems(ctx, client)
+		return nil
+	})
+
+	run("storage problems", func() error {
+		out.StorageProblems = readStorageProblems(ctx, client)
+		return nil
+	})
+
+	run("workloads", func() error {
+		out.Workloads = readWorkloads(ctx, client)
+		return nil
+	})
+
+	run("alerts", func() error {
+		out.Alerts = readAlerts(ctx, client)
+		return nil
+	})
+
+	run("control plane", func() error {
+		out.ControlPlane = readControlPlane(ctx, client)
+		return nil
+	})
+
+	run("namespace usage", func() error {
+		out.NamespaceUsage = readNamespaces(ctx, client)
+		return nil
+	})
+
+	run("spread", func() error {
+		out.Spread = readSpread(ctx, client)
+		return nil
+	})
+
+	run("extras", func() error {
+		out.Extras = readExtras(ctx, client)
+		return nil
+	})
+
+	run("trends", func() error {
+		out.Trends = readTrends(ctx, client, window, step)
+		return nil
+	})
+
+	run("summary", func() error {
+		out.Summary = readSummary(ctx, client)
+		return nil
+	})
+
+	run("node detail", func() error {
+		out.NodeDetails = readNodes(ctx, client)
+		out.Capacity = capacityOf(out.NodeDetails)
+		return nil
+	})
+
+	run("stuck containers", func() error {
+		out.Stuck = containerIssues(ctx, client, queryStuckContainers)
+		return nil
+	})
+
+	run("died containers", func() error {
+		out.Died = containerIssues(ctx, client, queryDiedContainers)
 		return nil
 	})
 

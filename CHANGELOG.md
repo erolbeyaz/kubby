@@ -5,6 +5,92 @@ sürümler kırıcı değişiklik içerebilir.
 
 ---
 
+## 0.10.0 — 2026-08-26
+
+Tek bir Overview, bir Home ekranı, yeniden tasarlanmış cluster yönetimi — ve Docker
+Hub'da yayımlanan ilk imaj.
+
+### Yayımlanan imaj
+
+- **`docker.io/ebeyaz/kubby`** — imaj artık Docker Hub'da (ADR-131, ADR-110'un yerine).
+  Kurmak için depoyu klonlamak ya da imaj derlemek gerekmiyor
+- **`deploy/compose/docker-compose.published.yml`** — imajı adıyla taşıyan compose
+  dosyası. Bir `.env` ve `docker compose up -d` ile kurulum tamam
+- Etiket her zaman bir sürüm, asla `latest`: `latest` neyin çalıştığını söyleyemez ve
+  geri alınamaz
+
+### Gezinme
+
+- **Tek Overview.** İki tasarım karşılaştırılıyordu; yenisi kazandı ve adı aldı (ADR-123)
+- **Home** — ray'in başında sabit bir çıkış ve cluster listesi. Kartlar `Connected` /
+  `Not connected` yazıyor, node/core/bellek/pod-slot taşıyor; **ulaşılamayan kart
+  tıklanamıyor** (ADR-125, ADR-126, ADR-128)
+- Ray'in üst bloğunda yalnızca **Nodes**; **Applications** Workloads'ın içinde
+- Erişilemez hâle gelen eski Overview ve Workloads > Overview ekranları silindi (ADR-127)
+
+### Cluster yönetimi
+
+- **Kayıt ekranı ortam katmanlarına göre gruplanıyor**, production ilk. Bozuk olanlar
+  sebebiyle en üstte adlandırılıyor; satırın tamamı cluster'ı açıyor (ADR-130)
+- **Detay** yedi panellik kaydırma yerine durum taşıyan bir ray + bölümler; silme kendi
+  bölümünde
+- **Ekleme** iki numaralı adım; ortam dropdown yerine katmana tıklanarak seçiliyor
+- Butonlar artık hover ve basılma durumu gösteriyor (ADR-131)
+
+### Düzeltmeler
+
+- **`topCpu` millicore döndürüyordu, panel "cores" yazıyordu** — `kube-system 61 cores`
+  aslında 60m'di (ADR-120)
+- **Aynı pod iki kez sayılıyordu:** imajı çekilemeyen pod hem "pending" hem
+  "ImagePullBackOff"tu. Pending artık yalnızca yerleştirilmeyi bekleyen pod
+- Tek bozuk pod problems listesinde üç kez görünüyordu (10→4 problem); son çıkış sebebi
+  artık kazanan satırın altında
+- Tek API server 2 sayılıyordu; restart sayısı ondalıklı yazılıyordu; committed yüzdeler
+  capacity ile çarpılıyordu
+- **Ağ grafiği** node başına iki çizgi yerine received/transmitted (ADR-124)
+- **Trend grafiklerine zaman ekseni** eklendi (ADR-129)
+- Placement paneli status paletinden ödünç aldığı renkleri bıraktı; doğrulanmış bir
+  kimlik paleti kullanıyor (ADR-121)
+- `fleetHealth` paylaşılan struct'a istek başına kapatma yazıyordu — çakışan iki istek
+  birbirinin grant haritasını kullanabiliyordu (ADR-128)
+- Status bar'daki monogram kaldırıldı
+
+---
+
+## 0.9.1 — 2026-08-26
+
+Cluster Overview'ın tamamı ve verilen tasarıma göre ikinci bir overview ekranı.
+
+### Cluster Overview
+
+- Ekran **sol bardaki Overview'a** taşındı; Workloads > Overview iş yükü listelerine döndü
+- **Türetilmiş cluster durumu** — skor değil, tetikleyen koşulun adıyla (ADR-114)
+- **Prometheus otomatik bulunuyor** ve cluster'ın kendi API server'ı üzerinden okunuyor;
+  elle adres girmek gerekmiyor (ADR-111)
+- Node kartları/tablosu: kullanım **ve** taahhüt, pressure, swap, inode, disk I/O, ağ
+  hataları, saat sapması, exporter erişilebilirliği
+- Throttling, exit code, HPA, endpoint'siz servis, takılı rollout, geciken CronJob
+- Sparkline, node condition görünümü, namespace × node heatmap
+- **Her sayı tıklanabilir** ve ilgili nesneyi açıyor
+
+### Overview 2
+
+- Verilen tasarıma göre ikinci bir ekran (`docs/DASHBOARD.md` şartnamesinin bir uygulaması)
+- Düzen tasarımın, renkler Kubby'nin
+- **Lucide ikonları** projeye gömüldü — CDN yok, kaynak içinde (ISC, `NOTICE`)
+
+### Bu sürümde düzeltilen kusurlar
+
+- **`NaN` tüm cevabı düşürüyordu.** `histogram_quantile` boş histogramda `NaN` döner ve
+  Go'nun JSON kodlayıcısı onu reddeder — tek bir quantile 178 KB'lık cevabın tamamını
+  kodlanamaz hâle getiriyordu
+- **`Point` JSON etiketsizdi** — `{At,Value}` gidiyor, istemci `{at,value}` bekliyordu;
+  cevabın tamamı doğrulamadan düşüyor, panel sessizce sıfır çiziyordu (ADR-112)
+- **Başarısız istek sağlıklı boş cluster gibi görünüyordu** — artık hata gösteriliyor
+- **Cluster başına grant seviyesi** ve **exporter job regex'i** düzeltildi
+
+---
+
 ## 0.9.0 — 2026-08-25
 
 İlk paketlenmiş sürüm. Dokuz faz tamamlandı; Faz 10 (sertleştirme ve yayın) bu sürümle

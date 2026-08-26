@@ -95,3 +95,21 @@ func TestStepKeepsSeriesToASensibleLength(t *testing.T) {
 		}
 	}
 }
+
+// Pending means "waiting to start for a reason nobody has named yet".
+//
+// Kubernetes leaves a pod in phase Pending while its image will not pull, so the plain
+// sum counted an ImagePullBackOff pod as pending — while the problem table under it
+// labelled that same pod ImagePullBackOff. The overview read "1 pending" with nothing
+// on the screen pending. ContainerCreating and PodInitializing stay in: those are a pod
+// on its way up, and every other panel treats them the same way.
+func TestPendingExcludesWhatIsAlreadyNamed(t *testing.T) {
+	if !strings.Contains(stuckContainers, "kube_pod_container_status_waiting_reason") {
+		t.Fatal("the stuck-container filter no longer looks at waiting reasons")
+	}
+	for _, starting := range []string{"ContainerCreating", "PodInitializing"} {
+		if !strings.Contains(stuckContainers, starting) {
+			t.Errorf("%s is not excluded; a pod starting normally would be reported as failing", starting)
+		}
+	}
+}

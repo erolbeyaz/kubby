@@ -13,6 +13,14 @@ interface ClusterPickerProps {
   fullWidth?: boolean
 }
 
+/** Why a cluster cannot be opened, short enough for a row in a dropdown. */
+const UNREACHABLE: Record<string, string> = {
+  invalid: 'credential rejected',
+  unreachable: 'not answering',
+  unknown: 'never checked',
+  valid: '',
+}
+
 const STATUS_COLOR: Record<string, string> = {
   valid: 'var(--status-ok)',
   invalid: 'var(--status-error)',
@@ -115,49 +123,67 @@ export function ClusterPicker({
               </p>
             )}
 
-            {clusters.map((cluster) => (
-              <button
-                key={cluster.id}
-                role="option"
-                aria-selected={cluster.id === current?.id}
-                type="button"
-                onClick={() => {
-                  onSelect(cluster.id)
-                  setOpen(false)
-                }}
-                className="flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors hover:bg-[var(--bg-hover)]"
-                style={{
-                  borderRadius: 'var(--radius-sharp)',
-                  backgroundColor: cluster.id === current?.id ? 'var(--bg-active)' : undefined,
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  className="h-6 w-1 shrink-0"
-                  style={{ backgroundColor: environmentColor(cluster.environment, cluster.color) }}
-                />
-                <span className="min-w-0 flex-1">
+            {clusters.map((cluster) => {
+              // A cluster nobody can reach has nothing behind it. Switching to one lands
+              // the reader on a connection error with every screen under it showing the
+              // same thing — the trap Home exists to prevent (ADR-125), and this was the
+              // last door still open into it.
+              const reachable = cluster.credentialStatus === 'valid'
+
+              return (
+                <button
+                  key={cluster.id}
+                  role="option"
+                  aria-selected={cluster.id === current?.id}
+                  aria-disabled={!reachable}
+                  disabled={!reachable}
+                  type="button"
+                  title={reachable ? undefined : cluster.statusDetail || UNREACHABLE[cluster.credentialStatus]}
+                  onClick={() => {
+                    onSelect(cluster.id)
+                    setOpen(false)
+                  }}
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                  style={{
+                    borderRadius: 'var(--radius-sharp)',
+                    backgroundColor: cluster.id === current?.id ? 'var(--bg-active)' : undefined,
+                    opacity: reachable ? 1 : 0.5,
+                  }}
+                >
                   <span
-                    className="block truncate"
-                    style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-primary)' }}
-                  >
-                    {cluster.name}
+                    aria-hidden="true"
+                    className="h-6 w-1 shrink-0"
+                    style={{ backgroundColor: environmentColor(cluster.environment, cluster.color) }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className="block truncate"
+                      style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-primary)' }}
+                    >
+                      {cluster.name}
+                    </span>
+                    {/* What is normally here — tier and version — is replaced by the
+                        reason, because for this row that is the only fact that matters. */}
+                    <span
+                      className="block truncate font-mono"
+                      style={{
+                        fontSize: 'var(--text-micro)',
+                        color: reachable ? 'var(--text-muted)' : 'var(--status-error)',
+                      }}
+                    >
+                      {reachable
+                        ? `${cluster.displayEnvironment}${cluster.k8sVersion ? ` · ${cluster.k8sVersion}` : ''}`
+                        : UNREACHABLE[cluster.credentialStatus]}
+                    </span>
                   </span>
                   <span
-                    className="block truncate font-mono"
-                    style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
-                  >
-                    {cluster.displayEnvironment}
-                    {cluster.k8sVersion ? ` · ${cluster.k8sVersion}` : ''}
-                  </span>
-                </span>
-                <span
-                  aria-hidden="true"
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: STATUS_COLOR[cluster.credentialStatus] }}
-                />
-              </button>
-            ))}
+                    aria-hidden="true"
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: STATUS_COLOR[cluster.credentialStatus] }}
+                  />
+                </button>
+              )
+            })}
           </div>
 
           {canManage && (

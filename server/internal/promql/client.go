@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,6 +34,14 @@ type Config struct {
 	// helps nobody.
 	InsecureSkipVerify bool
 	Timeout            time.Duration
+
+	// HTTPClient replaces the transport this client would otherwise build.
+	//
+	// It exists so a Prometheus with no address of its own can be reached through its
+	// cluster's API server, authenticated by the credential Kubby already holds. That
+	// path needs client certificates and a bearer token this package has no business
+	// knowing about, so the caller hands over a client instead of describing one.
+	HTTPClient *http.Client
 }
 
 // Client queries one Prometheus.
@@ -63,6 +72,16 @@ func New(cfg Config) (*Client, error) {
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
+	}
+
+	if cfg.HTTPClient != nil {
+		// Copied rather than mutated: it belongs to the caller, and a timeout set here
+		// would follow it everywhere else it is used.
+		injected := *cfg.HTTPClient
+		if injected.Timeout <= 0 {
+			injected.Timeout = timeout
+		}
+		return &Client{base: base, auth: cfg, http: &injected}, nil
 	}
 
 	return &Client{
@@ -99,9 +118,14 @@ type Series struct {
 }
 
 // Point is a value at a moment. The time is always UTC (ADR-026).
+//
+// Tagged, because this one crosses the wire: every chart on the cluster dashboard is a
+// list of these, and without tags they serialise as "At" and "Value" while the client
+// validates for "at" and "value". The whole response failed to parse over it, and the
+// panel showed zeros as though the cluster were empty.
 type Point struct {
-	At    time.Time
-	Value float64
+	At    time.Time `json:"at"`
+	Value float64   `json:"value"`
 }
 
 // Query asks for the value of an expression now.
@@ -261,6 +285,17 @@ func readValue(pair []any) (float64, bool) {
 	}
 	value, err := strconv.ParseFloat(text, 64)
 	if err != nil {
+		return 0, false
+	}
+	// NaN and Inf are dropped rather than carried.
+	//
+	// Prometheus returns them routinely — histogram_quantile over an empty histogram is
+	// NaN, and a rate divided by zero is Inf — and Go's JSON encoder refuses both. One
+	// NaN from one quantile on one cluster would fail the encoding of the entire
+	// response, and the dashboard would show nothing at all rather than the one panel
+	// that had no data. Dropping the sample here makes it read as "no data", which is
+	// what it means.
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, false
 	}
 	return value, true

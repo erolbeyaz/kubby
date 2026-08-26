@@ -413,3 +413,28 @@ func TestAvailableTypesExcludeWhatTheClusterDoesNotServe(t *testing.T) {
 		t.Skip("this cluster serves Gateway API; nothing to assert")
 	}
 }
+
+// The Home screen's card has to say what is on the other end of the link before anyone
+// clicks it, and it asks once per cluster — so it reads the node list and nothing else.
+func TestCapacityMeasuresTheClusterFromItsNodesAlone(t *testing.T) {
+	svc, c := seededCluster(t)
+
+	capacity, err := svc.Capacity(context.Background(), c, nil)
+	if err != nil {
+		t.Fatalf("Capacity: %v", err)
+	}
+
+	t.Logf("nodes=%d ready=%d cores=%.0f memory=%.0fMiB pods=%d",
+		capacity.Nodes, capacity.NodesReady, capacity.Cores, capacity.MemoryMiB, capacity.PodCapacity)
+
+	if capacity.Nodes == 0 {
+		t.Fatal("a running cluster reported no nodes")
+	}
+	// Every one of these is a number the card prints; a zero would be printed as fact.
+	if capacity.Cores == 0 || capacity.MemoryMiB == 0 || capacity.PodCapacity == 0 {
+		t.Errorf("a node with no capacity: %+v", capacity)
+	}
+	if capacity.NodesReady > capacity.Nodes {
+		t.Errorf("more nodes ready than exist: %+v", capacity)
+	}
+}

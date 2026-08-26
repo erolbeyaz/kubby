@@ -72,7 +72,8 @@ func (h *resourceHandlers) fleetHealth(w http.ResponseWriter, r *http.Request) {
 	// A cluster whose stored credential is already known not to work has nothing to
 	// sweep; attempting the connection would spend the whole per-cluster deadline to
 	// learn what the row already says.
-	h.fleet.Sweep = func(ctx context.Context, target health.FleetTarget) (*health.Report, error) {
+	gather := health.Gatherers{}
+	gather.Sweep = func(ctx context.Context, target health.FleetTarget) (*health.Report, error) {
 		c := byID[target.ID]
 		if c.CredentialStatus != cluster.StatusValid {
 			return nil, fmt.Errorf("the stored credential is %s", c.CredentialStatus)
@@ -82,7 +83,29 @@ func (h *resourceHandlers) fleetHealth(w http.ResponseWriter, r *http.Request) {
 			EventWindow: h.eventWindow,
 		}, impersonationFor(r, c))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"clusters": h.fleet.Cards(r.Context(), targets)})
+
+	// What each cluster is made of, so a card says what is on the other end of the link
+	// before anyone clicks it. Same rule as the sweep: a credential already known not to
+	// work is not worth a connection attempt.
+	gather.Capacity = func(ctx context.Context, target health.FleetTarget) (*health.ClusterCapacity, error) {
+		c := byID[target.ID]
+		if c.CredentialStatus != cluster.StatusValid {
+			return nil, fmt.Errorf("the stored credential is %s", c.CredentialStatus)
+		}
+		capacity, err := h.svc.Capacity(ctx, c, impersonationFor(r, c))
+		if err != nil {
+			return nil, err
+		}
+		return &health.ClusterCapacity{
+			Nodes:      capacity.Nodes,
+			NodesReady: capacity.NodesReady,
+			Cores:      capacity.Cores,
+			MemoryMiB:  capacity.MemoryMiB,
+			Pods:       capacity.PodCapacity,
+			K8sVersion: capacity.K8sVersion,
+		}, nil
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clusters": h.fleet.Cards(r.Context(), targets, gather)})
 }
 
 // workloadsOverview counts what is running and shows what has been happening to it.

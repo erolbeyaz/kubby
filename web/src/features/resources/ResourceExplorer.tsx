@@ -8,7 +8,10 @@ import { DockLauncher } from '@/components/DockLauncher'
 import { ResizablePanel } from '@/components/ResizablePanel'
 import { ApiError, api, type Cluster, type Forward, type ResourceRow } from '@/lib/api'
 
-import { ClusterOverview } from './ClusterOverview'
+import { Home } from '@/features/home/Home'
+import { ClusterOverview2 } from '@/features/overview2/ClusterOverview2'
+
+import { typeKeyForKind } from './statusColor'
 import { ObjectDrawer } from './ObjectDrawer'
 import { BottomDock } from '@/components/BottomDock'
 import { HealthPanel } from '@/features/health/HealthPanel'
@@ -27,7 +30,6 @@ import { nodeShellPath } from '@/lib/exec-stream'
 import { ForwardPane } from './ForwardPane'
 import { PortForwardDialog } from './PortForwardDialog'
 
-import { WorkloadsOverview } from './WorkloadsOverview'
 import { ActionRunner, type PendingAction } from './ActionRunner'
 import { DrainDialog } from './DrainDialog'
 import { ScaleDialog } from './ScaleDialog'
@@ -322,16 +324,45 @@ export function ResourceExplorer({
               {namespacesError.message}
             </Callout>
           </div>
-        ) : location.typeKey === 'overview' ? (
+        ) : location.typeKey === 'overview2' ? (
           <div className="min-w-0 flex-1">
-            <ClusterOverview cluster={cluster} onNavigate={navigateTo} onOpenCluster={onSelectCluster} />
+            <ClusterOverview2
+              cluster={cluster}
+              onOpenObject={(kind, namespace, name) => {
+                const typeKey = typeKeyForKind(kind)
+                if (!typeKey) return
+                if (kind === 'Namespace') return navigateTo({ typeKey: 'pods', namespace: name })
+                navigateTo({ typeKey, namespace, objectName: name })
+              }}
+              onOpenType={(typeKey, namespace) =>
+                navigateTo({ typeKey, namespace: namespace ?? '', objectName: null })
+              }
+              // Not onSelectCluster: that lands on the default Overview, so switching
+              // cluster from the strip at the top of this screen threw the reader off
+              // it. A card here changes which cluster, never which screen.
+              onOpenCluster={(clusterId) =>
+                onNavigate({
+                  clusterId,
+                  namespaces: [],
+                  typeKey: 'overview2',
+                  objectName: null,
+                  objectNamespace: '',
+                })
+              }
+            />
           </div>
-        ) : location.typeKey === 'workloads' ? (
+        ) : location.typeKey === 'home' ? (
           <div className="min-w-0 flex-1">
-            <WorkloadsOverview
-              clusterId={cluster.id}
-              namespaces={location.namespaces}
-              onOpenType={(typeKey) => onNavigate({ typeKey, objectName: null, objectNamespace: '' })}
+            <Home
+              onOpen={(clusterId) =>
+                onNavigate({
+                  clusterId,
+                  namespaces: [],
+                  typeKey: 'overview2',
+                  objectName: null,
+                  objectNamespace: '',
+                })
+              }
             />
           </div>
         ) : location.typeKey === 'applications' ? (

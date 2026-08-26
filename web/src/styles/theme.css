@@ -77,6 +77,25 @@
   --env-test: #38bdf8;
   --env-dr: #a78bfa;
 
+  /*
+   * Series colours — identity, not state.
+   *
+   * Deliberately separate from the status palette above: a chart segment painted
+   * status-orange reads as "this one is in trouble" when all it means is "this is the
+   * second node". Fixed order, never cycled and never reassigned by rank — a filter
+   * that drops one series must not repaint the others.
+   *
+   * Validated as a set against this surface: every step inside the dark lightness band,
+   * >= 3:1 against #181818, worst adjacent pair ΔE 8.4 under simulated deuteranopia and
+   * 19.3 with normal vision. Changing one value means validating the set again.
+   */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+
   color-scheme: dark;
 }
 
@@ -103,6 +122,15 @@
   --accent: #059669;
   --accent-hover: #047857;
   --accent-muted: #0596691f;
+
+  /* The same six hues stepped for the light surface, not an automatic flip. Three of
+     them fall under 3:1 on white, so anything using them carries visible labels. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
 
   color-scheme: light;
 }
@@ -328,50 +356,55 @@
     opacity: 1;
   }
 
-  /*
-   * The author's monogram, which appears above the signature on hover.
-   *
-   * A small mark rather than a large one: this says who made the thing, it is not a
-   * feature of it. It is anchored to the signature rather than to the strip, so it sits
-   * over the middle of the mark wherever the strip's other text puts it, and it never
-   * takes the pointer — something over the status bar that swallowed clicks would be a
-   * nuisance rather than a flourish.
-   *
-   * The tile carries its own ground, so it is not filtered per theme.
-   */
-  .monogram {
-    position: absolute;
-    bottom: calc(100% + 0.4rem);
-    left: 50%;
-    height: 2.5rem;
-    width: auto;
-    opacity: 0;
-    pointer-events: none;
-    border-radius: 0.6rem;
-    box-shadow: 0 4px 14px rgb(0 0 0 / 0.45);
-    transform: translate(-50%, 0.4rem);
-    transition:
-      opacity 160ms ease,
-      transform 200ms cubic-bezier(0.2, 0.8, 0.3, 1);
-  }
-
-  .signature-slot:hover .monogram {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-
-  /* A flourish is exactly the kind of motion someone may have asked not to see. */
-  @media (prefers-reduced-motion: reduce) {
-    .monogram {
-      transition: opacity 120ms ease;
-      transform: translate(-50%, 0);
-    }
-  }
-
   /* White on white is nothing, so the light theme is the one case that darkens it. */
   [data-theme='light'] .signature {
     filter: brightness(0.32) saturate(1.4);
     opacity: 0.65;
+  }
+
+  /*
+   * The button.
+   *
+   * Its colours come in as custom properties from the variant, so the rules below can
+   * actually win: an inline `background-color` beats any stylesheet `:hover`, which is
+   * why these buttons used to do nothing under the pointer.
+   *
+   * The press is a one-pixel drop rather than a scale or a shadow. A button that grows
+   * when you click it moves the thing you were aiming at.
+   */
+  .btn {
+    background-color: var(--btn-bg);
+    color: var(--btn-fg);
+    border-color: var(--btn-border);
+    transition:
+      background-color 110ms ease,
+      border-color 110ms ease,
+      color 110ms ease,
+      transform 70ms ease;
+  }
+
+  .btn:hover:not(:disabled),
+  .btn:focus-visible:not(:disabled) {
+    background-color: var(--btn-bg-hover);
+    border-color: var(--btn-border-hover);
+    color: var(--btn-fg-hover);
+  }
+
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn {
+      transition:
+        background-color 110ms ease,
+        border-color 110ms ease,
+        color 110ms ease;
+    }
+
+    .btn:active:not(:disabled) {
+      transform: none;
+    }
   }
 
   /* A header view button. Same reason as .menu-item: the hover has to live in CSS or an

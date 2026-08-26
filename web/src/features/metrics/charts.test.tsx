@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { Donut, format, formatBytes } from './charts'
+import { AreaChart, Donut, format, formatBytes } from './charts'
 
 describe('Donut', () => {
   // Each slice is drawn as one long dash rotated into place. If the rotations are
@@ -60,5 +60,75 @@ describe('number formatting', () => {
     expect(formatBytes(418004992)).toBe('399 MiB')
     expect(formatBytes(2 * 1024 * 1024 * 1024)).toBe('2.0 GiB')
     expect(formatBytes(512)).toBe('512 B')
+  })
+})
+
+describe('AreaChart', () => {
+  const at = (hour: number, minute = 0) =>
+    `2026-08-26T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`
+
+  const series = (points: Array<{ at: string; value: number }>) => [
+    { name: 'node-a', points, colour: 'var(--accent)' },
+  ]
+
+  // A line with no axis says "something changed" without saying when, which is the half
+  // that separates a rollout from an outage.
+  it('writes the window it covers under the plot', () => {
+    render(
+      <AreaChart
+        series={series([
+          { at: at(7), value: 10 },
+          { at: at(9), value: 20 },
+          { at: at(11), value: 15 },
+        ])}
+        unit="%"
+      />,
+    )
+
+    // UTC on the wire, Europe/Istanbul on the screen (ADR-026): 07:00Z reads as 10:00.
+    const axis = screen.getByTitle(/times in Europe\/Istanbul/)
+    expect(axis).toHaveTextContent('10:00')
+    expect(axis).toHaveTextContent('12:00')
+    expect(axis).toHaveTextContent('14:00')
+  })
+
+  // 22:00, 02:00, 06:00 leaves the reader working out which of those is yesterday.
+  it('adds the date once the window crosses one', () => {
+    render(
+      <AreaChart
+        series={series([
+          { at: '2026-08-25T06:00:00Z', value: 1 },
+          { at: '2026-08-25T18:00:00Z', value: 2 },
+          { at: '2026-08-26T06:00:00Z', value: 3 },
+        ])}
+      />,
+    )
+
+    const axis = screen.getByTitle(/times in Europe\/Istanbul/)
+    expect(axis).toHaveTextContent('25 Aug')
+    expect(axis).toHaveTextContent('26 Aug')
+  })
+
+  // Bytes per second read as bytes per second, not as a bare "4k".
+  it('lets a chart write its own unit', () => {
+    render(
+      <AreaChart
+        series={series([
+          { at: at(7), value: 1024 },
+          { at: at(8), value: 4096 },
+        ])}
+        render={(value) => `${formatBytes(value)}/s`}
+      />,
+    )
+
+    // min, max and current all wear the unit.
+    expect(screen.getByText('1 KiB/s')).toBeInTheDocument()
+    expect(screen.getAllByText('4 KiB/s').length).toBe(2)
+  })
+
+  // A chart with nothing to draw says so rather than drawing a flat line at zero.
+  it('says when there is not enough history to draw', () => {
+    render(<AreaChart series={series([{ at: at(7), value: 1 }])} />)
+    expect(screen.getByText('not enough history yet')).toBeInTheDocument()
   })
 })

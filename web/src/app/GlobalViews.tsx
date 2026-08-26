@@ -15,10 +15,10 @@ export interface GlobalView {
  * answers "which objects", these answer "how is it". Later phases add entries here.
  */
 export const GLOBAL_VIEWS: GlobalView[] = [
-  // Overview answers "how is everything": the fleet at the top, then this cluster. A
-  // separate Fleet button asked the same question at a different scale and made the
-  // reader choose between two answers to it.
-  { id: 'overview', label: 'Overview', icon: 'health', needsCluster: false },
+  // One Overview. There were two while the newer design was being compared against the
+  // original; the newer one won and took the name (ADR-117). Two chips asking the same
+  // question made the reader choose between two answers to it.
+  { id: 'overview2', label: 'Overview', icon: 'health', needsCluster: true },
   { id: 'health', label: 'Health', icon: 'warning', needsCluster: true },
 ]
 

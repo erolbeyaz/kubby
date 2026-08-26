@@ -36,6 +36,21 @@ type ClusterCard struct {
 	CheckedAt string `json:"checkedAt"`
 	// Stale marks a card served from cache rather than swept just now.
 	Stale bool `json:"stale"`
+	// Capacity is what the cluster is made of. Absent when it could not be reached, or
+	// when nothing was asked to gather it — a card without it still says what is wrong,
+	// which is the question this screen exists for.
+	Capacity *ClusterCapacity `json:"capacity,omitempty"`
+}
+
+// ClusterCapacity is the size of a cluster, for a card that has to say what is on the
+// other end of the link before anyone clicks it.
+type ClusterCapacity struct {
+	Nodes      int     `json:"nodes"`
+	NodesReady int     `json:"nodesReady"`
+	Cores      float64 `json:"cores"`
+	MemoryMiB  float64 `json:"memoryMiB"`
+	Pods       int     `json:"pods"`
+	K8sVersion string  `json:"k8sVersion,omitempty"`
 }
 
 // FleetTarget is a cluster to sweep.
@@ -50,9 +65,25 @@ type FleetTarget struct {
 // SweepFunc gathers one cluster's report.
 type SweepFunc func(ctx context.Context, target FleetTarget) (*Report, error)
 
+// CapacityFunc gathers what a cluster is made of. Optional; a nil func leaves the card
+// without a capacity block rather than failing the sweep.
+type CapacityFunc func(ctx context.Context, target FleetTarget) (*ClusterCapacity, error)
+
+// Gatherers are how one request reads its clusters.
+//
+// Passed in per call rather than held on the Fleet, because they close over the caller's
+// own state — which clusters this user may see, and their stored credentials. Assigning
+// them to the shared struct meant two overlapping requests could each run the other's
+// closure: at best a sweep against the wrong grant map, at worst a nil dereference on a
+// cluster the other user cannot see.
+type Gatherers struct {
+	Sweep SweepFunc
+	// Capacity is optional; nil leaves the cards without a capacity block.
+	Capacity CapacityFunc
+}
+
 // Fleet sweeps many clusters and caches what it finds.
 type Fleet struct {
-	Sweep   SweepFunc
 	TTL     time.Duration
 	Timeout time.Duration
 	Now     func() time.Time
@@ -70,7 +101,7 @@ type cardEntry struct {
 //
 // One slow or unreachable cluster must not hold the page: each sweep has its own deadline
 // and a cluster that misses it comes back marked rather than missing.
-func (f *Fleet) Cards(ctx context.Context, targets []FleetTarget) []ClusterCard {
+func (f *Fleet) Cards(ctx context.Context, targets []FleetTarget, gather Gatherers) []ClusterCard {
 	cards := make([]ClusterCard, len(targets))
 
 	var wg sync.WaitGroup
@@ -83,7 +114,7 @@ func (f *Fleet) Cards(ctx context.Context, targets []FleetTarget) []ClusterCard 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cards[i] = f.sweep(ctx, target)
+			cards[i] = f.sweep(ctx, target, gather)
 		}()
 	}
 	wg.Wait()
@@ -105,7 +136,7 @@ func (f *Fleet) Cards(ctx context.Context, targets []FleetTarget) []ClusterCard 
 	return cards
 }
 
-func (f *Fleet) sweep(ctx context.Context, target FleetTarget) ClusterCard {
+func (f *Fleet) sweep(ctx context.Context, target FleetTarget, gather Gatherers) ClusterCard {
 	card := ClusterCard{
 		ID:          target.ID,
 		Name:        target.Name,
@@ -119,12 +150,32 @@ func (f *Fleet) sweep(ctx context.Context, target FleetTarget) ClusterCard {
 	scoped, cancel := context.WithTimeout(ctx, f.timeout())
 	defer cancel()
 
-	report, err := f.Sweep(scoped, target)
+	// Both against the same deadline: the size of the cluster is worth having but never
+	// worth holding the page for, so a capacity that does not answer costs that one
+	// block and nothing else.
+	var (
+		capacity    *ClusterCapacity
+		capacityErr error
+		wg          sync.WaitGroup
+	)
+	if gather.Capacity != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			capacity, capacityErr = gather.Capacity(scoped, target)
+		}()
+	}
+
+	report, err := gather.Sweep(scoped, target)
+	wg.Wait()
 	if err != nil {
 		card.Unreachable = true
 		card.Error = err.Error()
 		f.store(target.ID, card)
 		return card
+	}
+	if capacityErr == nil {
+		card.Capacity = capacity
 	}
 
 	card.Counts = report.Counts

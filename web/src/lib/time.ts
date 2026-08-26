@@ -23,6 +23,34 @@ export function formatAbsolute(iso: string): string {
   return absoluteFormatter.format(date)
 }
 
+const clockFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: DISPLAY_TIMEZONE,
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+const dayClockFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: DISPLAY_TIMEZONE,
+  day: '2-digit',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+/**
+ * A chart axis tick: the time of day, and the date too once the window crosses one.
+ *
+ * A 24-hour window whose ticks read 22:00, 02:00, 06:00 leaves the reader working out
+ * which of those is yesterday.
+ */
+export function formatClock(iso: string, withDay = false): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return (withDay ? dayClockFormatter : clockFormatter).format(date)
+}
+
 /** Below this many minutes an age is shown to the second, and ticks. */
 export const LIVE_MINUTES = 10
 

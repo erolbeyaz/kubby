@@ -32,10 +32,12 @@ const CLUSTERS = [
     metricsAvailable: true, readOnly: false, impersonationEnabled: false, qpsLimit: 50,
   },
   {
+    // Reachable, because the picker no longer offers a cluster that is not — a rule
+    // covered on its own in ClusterPicker.test.tsx.
     id: 'c2', name: 'staging', environment: 'test', environmentLabel: '',
     displayEnvironment: 'test', color: '', authSource: 'kubeconfig',
     apiServerUrl: 'https://127.0.0.1:6551', insecureSkipTlsVerify: false,
-    credentialStatus: 'invalid', statusDetail: 'the credential was rejected',
+    credentialStatus: 'valid',
     metricsAvailable: false, readOnly: false, impersonationEnabled: false, qpsLimit: 50,
   },
 ]
@@ -107,6 +109,19 @@ describe('Shell', () => {
     }
   })
 
+  // There were two Overview chips while the newer design was compared against the
+  // original. Two chips asking the same question make the reader choose between two
+  // answers to it.
+  it('offers exactly one Overview', async () => {
+    mockApi()
+    inCluster()
+    renderShell()
+
+    await screen.findByRole('button', { name: 'Overview' })
+    expect(screen.queryByRole('button', { name: 'Overview 2' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /^Overview/ })).toHaveLength(1)
+  })
+
   it('offers no navigation that leads nowhere', async () => {
     mockApi()
     renderShell()
@@ -128,7 +143,21 @@ describe('Shell', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Select cluster' }))
     await userEvent.click(screen.getByRole('option', { name: /staging/ }))
 
-    await waitFor(() => expect(window.location.pathname).toBe('/clusters/c2/-/overview'))
+    // The Overview, whose key is still `overview2` from when there were two of them.
+    await waitFor(() => expect(window.location.pathname).toBe('/clusters/c2/-/overview2'))
+  })
+
+  // The trap: a cluster that stops answering leaves every screen under it showing the
+  // connection error, and the mark used to navigate *within* that cluster — so there was
+  // no way back to the cluster list without editing the URL.
+  it('leaves a cluster that cannot be reached by way of the mark', async () => {
+    mockApi()
+    inCluster()
+    renderShell()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Kubby home' }))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/clusters/c1/-/home'))
   })
 
   it('reaches cluster management from the header', async () => {

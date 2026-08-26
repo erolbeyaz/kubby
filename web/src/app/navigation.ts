@@ -24,7 +24,8 @@ export interface Location {
   settingsView: 'account' | 'users' | 'kubby'
 }
 
-const DEFAULT_TYPE = 'overview'
+/** Where a cluster opens: the Overview. Still keyed `overview2` from when there were two. */
+const DEFAULT_TYPE = 'overview2'
 
 export const EMPTY_LOCATION: Location = {
   section: 'clusters',

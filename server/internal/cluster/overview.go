@@ -195,6 +195,53 @@ func podProblem(pod *unstructured.Unstructured) (reason, severity string) {
 	return "", ""
 }
 
+// Capacity is what a cluster is made of, from the node list alone.
+//
+// Deliberately not ClusterOverview: that lists every pod and namespace as well, and this
+// runs once per cluster on a fleet screen. What a card needs — how many machines, how big
+// they are, how many are answering — is entirely in the nodes, which is one call against
+// a list a target cluster caps at ten.
+func (s *Service) Capacity(ctx context.Context, cluster *store.Cluster, impersonate *ImpersonationConfig) (*Capacity, error) {
+	cfg, err := s.RESTConfigFor(ctx, cluster, impersonate)
+	if err != nil {
+		return nil, err
+	}
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	nodes, err := client.Resource(schemaNodes).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, translateAPIError(err, ResourceType{Kind: "Node", Resource: "nodes"})
+	}
+
+	out := &Capacity{Nodes: len(nodes.Items), K8sVersion: cluster.K8sVersion}
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		if nodeReady(node) {
+			out.NodesReady++
+		}
+		// Capacity rather than allocatable: the card answers "what is this machine",
+		// and the reserved slice belongs on the screen that plans where pods fit.
+		capacity, _, _ := unstructured.NestedStringMap(node.Object, "status", "capacity")
+		out.Cores += cores(capacity["cpu"])
+		out.MemoryMiB += mib(capacity["memory"])
+		out.PodCapacity += int(number(capacity["pods"]))
+	}
+	return out, nil
+}
+
+// Capacity is the size of a cluster.
+type Capacity struct {
+	Nodes       int     `json:"nodes"`
+	NodesReady  int     `json:"nodesReady"`
+	Cores       float64 `json:"cores"`
+	MemoryMiB   float64 `json:"memoryMiB"`
+	PodCapacity int     `json:"podCapacity"`
+	K8sVersion  string  `json:"k8sVersion,omitempty"`
+}
+
 func nodeReady(node *unstructured.Unstructured) bool {
 	conditions, _, _ := unstructured.NestedSlice(node.Object, "status", "conditions")
 

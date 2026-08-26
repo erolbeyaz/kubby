@@ -10,7 +10,7 @@ import { StatusBar } from '@/components/StatusBar'
 import { CommandPalette } from '@/features/search/CommandPalette'
 import { AccountScreen } from '@/features/account/AccountScreen'
 import { ManageClustersScreen } from '@/features/clusters/ManageClustersScreen'
-import { FleetHealth } from '@/features/health/FleetHealth'
+import { Home } from '@/features/home/Home'
 import { ResourceExplorer } from '@/features/resources/ResourceExplorer'
 import { SettingsScreen } from '@/features/settings/SettingsScreen'
 import { api, type Me } from '@/lib/api'
@@ -77,7 +77,7 @@ export function Shell({ me, onSignOut }: ShellProps) {
       section: 'clusters',
       clusterId,
       namespaces: [],
-      typeKey: 'overview',
+      typeKey: 'overview2',
       objectName: null,
       objectNamespace: '',
     })
@@ -93,16 +93,14 @@ export function Shell({ me, onSignOut }: ShellProps) {
         className="flex h-12 shrink-0 items-center gap-3 border-b px-3"
         style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-subtle)' }}
       >
-        {/* The mark goes to the current cluster's overview, which is where someone
-            clicking "home" in a cluster tool means to end up. */}
+        {/* The mark goes Home, and Home is the cluster list — not the current cluster's
+            own overview, which is where it used to land. A cluster that stops answering
+            leaves every screen under it showing the connection error, and a "home" button
+            that stays inside that cluster is no way out of it. */}
         <button
           type="button"
           onClick={() =>
-            navigate(
-              location.clusterId
-                ? { section: 'clusters', typeKey: 'overview', objectName: null, objectNamespace: '' }
-                : { section: 'clusters', clusterId: null, objectName: null, objectNamespace: '' },
-            )
+            navigate({ section: 'clusters', typeKey: 'home', objectName: null, objectNamespace: '' })
           }
           className="flex shrink-0 items-center"
           aria-label="Kubby home"
@@ -113,7 +111,7 @@ export function Shell({ me, onSignOut }: ShellProps) {
         <span className="h-5 w-px shrink-0" style={{ backgroundColor: 'var(--border-default)' }} />
 
         <GlobalViews
-          active={location.section === 'clusters' ? (location.clusterId ? location.typeKey : 'overview') : ''}
+          active={location.section === 'clusters' && location.clusterId ? location.typeKey : ''}
           hasCluster={current !== null}
           onSelect={(view) =>
             navigate(
@@ -161,7 +159,7 @@ export function Shell({ me, onSignOut }: ShellProps) {
           <ManageClustersScreen
             me={me}
             onOpenCluster={(clusterId) =>
-              navigate({ section: 'clusters', clusterId, namespaces: [], typeKey: 'overview', objectName: null })
+              navigate({ section: 'clusters', clusterId, namespaces: [], typeKey: 'overview2', objectName: null })
             }
           />
         ) : current ? (
@@ -176,7 +174,7 @@ export function Shell({ me, onSignOut }: ShellProps) {
                 section: 'clusters',
                 clusterId,
                 namespaces: [],
-                typeKey: 'overview',
+                typeKey: 'overview2',
                 objectName: null,
                 objectNamespace: '',
               })
@@ -200,8 +198,9 @@ export function Shell({ me, onSignOut }: ShellProps) {
           />
         ) : (
           // With no cluster chosen, the landing screen answers the question people
-          // actually arrive with: which of my clusters is broken (ADR-056).
-          <FleetHealth onOpen={openClusterOverview} />
+          // actually arrive with: which of my clusters is broken (ADR-056). The same
+          // screen the rail's Home entry opens — one fleet view, not two.
+          <Home onOpen={openClusterOverview} />
         )}
       </div>
 

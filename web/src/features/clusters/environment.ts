@@ -24,3 +24,26 @@ export const ENVIRONMENT_HINT: Record<Environment, string> = {
 export function environmentColor(environment: Environment, override: string): string {
   return override || ENVIRONMENT_COLOR[environment]
 }
+
+/**
+ * How a tier is titled where it heads a group rather than sits in a field.
+ *
+ * Upper case because a band is a heading, and because "PRODUCTION" is harder to skim
+ * past than "prod" — which is the entire point of the grouping.
+ */
+export const ENVIRONMENT_TITLE: Record<Environment, string> = {
+  prod: 'Production',
+  preprod: 'Pre-production',
+  test: 'Test',
+  dr: 'Disaster recovery',
+}
+
+/**
+ * Registry order: production first, always.
+ *
+ * Not alphabetical and not by when it was added. The first question on this screen is
+ * "is anything in production broken", and a tier that sorts by name puts "dr" above it.
+ */
+export function byEnvironment(a: Environment, b: Environment): number {
+  return ENVIRONMENTS.indexOf(a) - ENVIRONMENTS.indexOf(b)
+}

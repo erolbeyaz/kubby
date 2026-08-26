@@ -203,5 +203,5 @@ var settingKeys = []string{"node_shell", "pod_debug", "metrics", "audit_sink"}
 
 const (
 	archiveVersion = 1
-	kubbyVersion   = "0.9"
+	kubbyVersion   = "0.9.1"
 )

@@ -8,24 +8,45 @@ verirsin; yoksa her şey onlarsız çalışır.
 
 ---
 
-## Kurulum
+## Kurulum — yayımlanan imajla
+
+Depoyu klonlamak ya da imaj derlemek gerekmiyor. Boş bir dizinde:
+
+```bash
+curl -O https://raw.githubusercontent.com/erolbeyaz/kubby/main/deploy/compose/docker-compose.published.yml
+curl -o .env https://raw.githubusercontent.com/erolbeyaz/kubby/main/deploy/compose/.env.published.example
+```
+
+`.env` içinde **iki değer zorunlu**:
+
+| Değişken | Nasıl üretilir |
+|---|---|
+| `KUBBY_DB_PASSWORD` | `openssl rand -base64 24` |
+| `KUBBY_ENCRYPTION_KEY` | `openssl rand -base64 32` |
+
+> **Şifreleme anahtarını kaybedersen saklanan hiçbir kubeconfig açılamaz.** İlk
+> başlatmadan önce yedeğini bu makinenin dışında bir yere al.
+
+Sonra:
+
+```bash
+docker compose -f docker-compose.published.yml up -d
+```
+
+İmajın adı compose dosyasının içinde yazıyor (`docker.io/ebeyaz/kubby:<sürüm>`).
+Yükseltmek bir etiket değişimi ve `up -d`; geri almak aynısının tersi. Etiket her zaman
+bir sürüm, asla `latest` — `latest` neyin çalıştığını söyleyemez.
+
+---
+
+## Kurulum — kendi imajını dereliyorsan
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` içinde **üç değer zorunlu**:
-
-| Değişken | Nasıl üretilir |
-|---|---|
-| `KUBBY_IMAGE` | `localhost:5000/kubby:0.9.0` — sabit sürüm etiketi, `latest` değil |
-| `KUBBY_DB_PASSWORD` | `openssl rand -base64 24` |
-| `KUBBY_ENCRYPTION_KEY` | `openssl rand -base64 32` |
-
-> **Şifreleme anahtarını kaybedersen saklanan hiçbir kubeconfig açılamaz.** Yedeğini
-> Kubby'nin dışında tut.
-
-Sonra:
+Bu yolda **üç değer zorunlu**: yukarıdaki ikisi ve `KUBBY_IMAGE` (kendi registry'ndeki
+sabit sürüm etiketi). Sonra:
 
 ```bash
 docker compose up -d

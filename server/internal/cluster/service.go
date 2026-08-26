@@ -54,6 +54,9 @@ type Service struct {
 	// metricsDefaults supplies the deployment-wide Prometheus, read at the moment it is
 	// needed so an admin's change takes effect without a restart.
 	metricsDefaults MetricsDefaultsFunc
+	// metricsDiscovery remembers where each cluster's own Prometheus was found, so the
+	// search behind the dashboard happens once rather than on every refresh.
+	metricsDiscovery metricsDiscoveryCache
 }
 
 func NewService(db *store.DB, keyring *crypto.Keyring, settings Settings) *Service {

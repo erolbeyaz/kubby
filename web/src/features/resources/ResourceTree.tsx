@@ -37,14 +37,11 @@ export function ResourceTree({
   return (
     <div className="flex h-full flex-col">
       <nav className="flex-1 overflow-y-auto p-1" aria-label="Resource kinds">
-        <TopEntry icon="health" label="Overview" typeKey="overview" selectedType={selectedType} onSelectType={onSelectType} />
-        <TopEntry
-          icon="clusters"
-          label="Applications"
-          typeKey="applications"
-          selectedType={selectedType}
-          onSelectType={onSelectType}
-        />
+        {/* Home first: it is the way out. A cluster that stops answering leaves every
+            screen under it showing an error, and without a fixed exit the reader is
+            stuck on it. Applications went into Workloads, where a Helm release belongs —
+            it is a bundle of the things listed under it, not a peer of the node list. */}
+        <TopEntry icon="clusters" label="Home" typeKey="home" selectedType={selectedType} onSelectType={onSelectType} />
         <TopEntry icon="storage" label="Nodes" typeKey="nodes" selectedType={selectedType} onSelectType={onSelectType} />
 
         <div className="my-1.5 h-px" style={{ backgroundColor: 'var(--border-default)' }} />
@@ -68,20 +65,12 @@ export function ResourceTree({
               }
             >
               {category === 'workload' && (
-                <button
-                  type="button"
-                  onClick={() => onSelectType('workloads')}
-                  className="flex h-8 w-full items-center rounded-sm pl-6 pr-2 text-left transition-colors hover:bg-[var(--bg-hover)]"
-                  style={{
-                    borderRadius: 'var(--radius-sharp)',
-                    fontSize: '14px',
-                    color: selectedType === 'workloads' ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    backgroundColor: selectedType === 'workloads' ? 'var(--accent-muted)' : undefined,
-                    boxShadow: selectedType === 'workloads' ? 'inset 2px 0 0 0 var(--accent)' : undefined,
-                  }}
-                >
-                  Overview
-                </button>
+                <SubEntry
+                  label="Applications"
+                  typeKey="applications"
+                  selectedType={selectedType}
+                  onSelectType={onSelectType}
+                />
               )}
 
               {items.map((type) => {
@@ -149,6 +138,38 @@ export function ResourceTree({
 }
 
 /** The views that belong to the cluster itself rather than to a category of objects. */
+/** A row inside a category, indented to sit with the kinds under it. */
+function SubEntry({
+  label,
+  typeKey,
+  selectedType,
+  onSelectType,
+}: {
+  label: string
+  typeKey: string
+  selectedType: string | null
+  onSelectType: (typeKey: string) => void
+}) {
+  const selected = selectedType === typeKey
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelectType(typeKey)}
+      className="flex h-8 w-full items-center rounded-sm pl-6 pr-2 text-left transition-colors hover:bg-[var(--bg-hover)]"
+      style={{
+        borderRadius: 'var(--radius-sharp)',
+        fontSize: '14px',
+        color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
+        backgroundColor: selected ? 'var(--accent-muted)' : undefined,
+        boxShadow: selected ? 'inset 2px 0 0 0 var(--accent)' : undefined,
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 function TopEntry({
   icon,
   label,

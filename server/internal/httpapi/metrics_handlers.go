@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/promql"
 )
 
@@ -22,19 +23,26 @@ func (h *resourceHandlers) clusterMetrics(w http.ResponseWriter, r *http.Request
 
 	window := parseWindow(r.URL.Query().Get("window"))
 
-	health, err := h.svc.ClusterHealthMetrics(r.Context(), c, window)
+	health, source, err := h.svc.ClusterHealthMetrics(r.Context(), c, window)
 	if errors.Is(err, promql.ErrNotConfigured) {
+		// Nothing typed, and nothing found in the cluster either. Reported as a state so
+		// the panel can step aside quietly instead of showing a failure the reader did
+		// not cause.
 		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
 		return
 	}
 	if err != nil {
 		// Reachable but unhappy is worth saying out loud: a wrong address or a refused
 		// credential is a thing the reader can fix, and a silent empty panel is not.
-		writeJSON(w, http.StatusOK, map[string]any{"configured": true, "error": err.Error()})
+		body := map[string]any{"configured": true, "error": err.Error()}
+		describeSource(body, source)
+		writeJSON(w, http.StatusOK, body)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "health": health})
+	body := map[string]any{"configured": true, "health": health}
+	describeSource(body, source)
+	writeJSON(w, http.StatusOK, body)
 }
 
 // parseWindow keeps the choice to a few sensible spans. An arbitrary duration from the
@@ -49,5 +57,21 @@ func parseWindow(raw string) time.Duration {
 		return 24 * time.Hour
 	default:
 		return time.Hour
+	}
+}
+
+// describeSource adds where the numbers came from, and says nothing when there is nothing
+// to say.
+//
+// An empty string would be worse than an absent field: the client validates the source
+// against the three it knows, so sending "" would fail the whole response over a detail,
+// and the panel would show zeros as though the cluster were empty.
+func describeSource(body map[string]any, source cluster.MetricsSource) {
+	if source.Kind == "" {
+		return
+	}
+	body["source"] = source.Kind
+	if source.Where != "" {
+		body["endpoint"] = source.Where
 	}
 }

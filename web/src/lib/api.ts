@@ -443,6 +443,19 @@ export const clusterCardSchema = z.object({
   top: z.array(findingSchema).optional(),
   checkedAt: z.string(),
   stale: z.boolean(),
+  // Absent when the cluster could not be reached — a card without it still says what is
+  // wrong, which is what the fleet screen is for.
+  capacity: z
+    .object({
+      nodes: z.number(),
+      nodesReady: z.number(),
+      cores: z.number(),
+      memoryMiB: z.number(),
+      pods: z.number(),
+      k8sVersion: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
 })
 
 export type ClusterCard = z.infer<typeof clusterCardSchema>
@@ -461,6 +474,206 @@ const containersSchema = z.object({ containers: z.array(containerSchema) })
 // ---------------------------------------------------------------- cluster metrics
 
 const pointSchema = z.object({ at: z.string(), value: z.number() })
+
+// A number that might not exist. `known: false` means nobody is collecting the metric —
+// which is a different answer from zero, and the panel says N/A rather than reassuring
+// somebody with a number it never read.
+const readingSchema = z.object({ value: z.number(), known: z.boolean() })
+
+const clusterSummarySchema = z.object({
+  status: z.enum(['Healthy', 'Degraded', 'Critical', 'Unknown']),
+  reasons: z.array(z.string()).nullable().optional(),
+  nodesReady: readingSchema,
+  nodesTotal: readingSchema,
+  nodesNotReady: readingSchema,
+  nodesUnschedulable: readingSchema,
+  nodesUnderPressure: readingSchema,
+  podsReady: readingSchema,
+  podsTotal: readingSchema,
+  podsPending: readingSchema,
+  // Older servers do not send it; the tile reads N/A rather than a reassuring zero.
+  containersNotStarting: readingSchema.optional(),
+  longestPendingSeconds: readingSchema,
+  restarts1h: readingSchema,
+  oomKilled: readingSchema,
+  evicted: readingSchema,
+  unavailableWorkloads: readingSchema,
+  alertsCritical: readingSchema,
+  alertsWarning: readingSchema,
+  apiErrorRate: readingSchema,
+  targetsDown: readingSchema,
+  targetsTotal: readingSchema,
+})
+
+const problemSchema = z.object({
+  kind: z.string(),
+  namespace: z.string(),
+  name: z.string(),
+  container: z.string().optional(),
+  reason: z.string(),
+  detail: z.string().optional(),
+  severity: z.string(),
+  node: z.string().optional(),
+  ageSeconds: z.number().optional(),
+})
+
+const podProblemSchema = z.object({
+  namespace: z.string(),
+  pod: z.string(),
+  container: z.string().optional(),
+  node: z.string().optional(),
+  status: z.string(),
+  reason: z.string().optional(),
+  severity: z.string(),
+  restarts: z.number(),
+  ageSeconds: z.number(),
+  cpuUsed: readingSchema,
+  cpuRequest: readingSchema,
+  cpuLimit: readingSchema,
+  memoryUsed: readingSchema,
+  memoryRequest: readingSchema,
+  memoryLimit: readingSchema,
+})
+
+const storageProblemSchema = z.object({
+  namespace: z.string(),
+  name: z.string(),
+  phase: z.string(),
+  storageClass: z.string().optional(),
+  capacityBytes: readingSchema,
+  usedBytes: readingSchema,
+  severity: z.string(),
+})
+
+const workloadRowSchema = z.object({
+  kind: z.string(),
+  namespace: z.string(),
+  name: z.string(),
+  ready: z.number(),
+  desired: z.number(),
+  updated: z.number(),
+  available: z.number(),
+  misscheduled: z.number(),
+})
+
+const alertSchema = z.object({
+  name: z.string(),
+  severity: z.string(),
+  namespace: z.string().optional(),
+  object: z.string().optional(),
+  kind: z.string().optional(),
+  summary: z.string().optional(),
+})
+
+const controlPlaneSchema = z.object({
+  apiServers: readingSchema,
+  apiLatencyP50: readingSchema,
+  apiLatencyP95: readingSchema,
+  apiLatencyP99: readingSchema,
+  apiErrors4xx: readingSchema,
+  apiErrors5xx: readingSchema,
+  apiRequests: readingSchema,
+  etcdMembers: readingSchema,
+  etcdHasLeader: readingSchema,
+  etcdLeaderChanges: readingSchema,
+  etcdDbBytes: readingSchema,
+  etcdFsyncP99: readingSchema,
+  schedulerAttempts: readingSchema,
+  schedulerUnschedulable: readingSchema,
+  corednsUp: readingSchema,
+  corednsErrorRate: readingSchema,
+  corednsLatencyP99: readingSchema,
+  scrapeTargets: readingSchema,
+  scrapeFailures: readingSchema,
+  ruleFailures: readingSchema,
+  certExpiryDays: readingSchema,
+  controllerQueueDepth: readingSchema,
+  controllerRetries: readingSchema,
+  ingressRequests: readingSchema,
+  ingressErrorRate: readingSchema,
+  ingressLatencyP99: readingSchema,
+  quotaNearLimit: readingSchema,
+  volumeCapacityBytes: readingSchema,
+  volumesBound: readingSchema,
+  volumeRequestedBytes: readingSchema,
+  volumeUsedBytes: readingSchema,
+})
+
+const namespaceUsageSchema = z.object({
+  namespace: z.string(),
+  cpuCores: z.number(),
+  cpuRequests: z.number(),
+  memoryBytes: z.number(),
+  memoryRequests: z.number(),
+  pods: z.number(),
+})
+
+const extrasSchema = z.object({
+  risks: z
+    .array(
+      z.object({
+        namespace: z.string(),
+        pod: z.string(),
+        container: z.string(),
+        kind: z.string(),
+        value: z.number().optional(),
+      }),
+    )
+    .nullable(),
+  exitCodes: z
+    .array(
+      z.object({
+        namespace: z.string(),
+        pod: z.string(),
+        container: z.string(),
+        code: z.number(),
+        reason: z.string().optional(),
+      }),
+    )
+    .nullable(),
+  scalers: z
+    .array(
+      z.object({
+        namespace: z.string(),
+        name: z.string(),
+        current: z.number(),
+        min: z.number(),
+        max: z.number(),
+        atCeiling: z.boolean(),
+      }),
+    )
+    .nullable(),
+  scalersKnown: z.boolean(),
+  serviceGaps: z.array(z.object({ namespace: z.string(), name: z.string() })).nullable(),
+  servicesKnown: z.boolean(),
+  downTargets: z.array(z.object({ job: z.string(), instance: z.string() })).nullable(),
+  containersReady: readingSchema,
+  containersTotal: readingSchema,
+  restarts15m: readingSchema,
+  restarts24h: readingSchema,
+  appErrorRate: readingSchema,
+  lateCronJobs: readingSchema,
+  stalledRollouts: z.array(problemSchema).nullable(),
+})
+
+const namedSeriesSchema = z.object({ name: z.string(), points: z.array(pointSchema).nullable() })
+
+const trendsSchema = z.object({
+  sparks: z.record(z.string(), z.array(pointSchema).nullable()).nullable().optional(),
+  diskByNode: z.array(namedSeriesSchema).nullable().optional(),
+  networkRx: z.array(namedSeriesSchema).nullable().optional(),
+  networkTx: z.array(namedSeriesSchema).nullable().optional(),
+  cpuByNodeOverTime: z.array(namedSeriesSchema).nullable().optional(),
+  memoryByNodeOverTime: z.array(namedSeriesSchema).nullable().optional(),
+  ioWaitByNode: z.array(namedSeriesSchema).nullable().optional(),
+})
+
+const containerIssueSchema = z.object({
+  namespace: z.string(),
+  pod: z.string(),
+  container: z.string(),
+  reason: z.string(),
+})
 
 const clusterHealthMetricsSchema = z.object({
   cpu: z.array(pointSchema).nullable().optional(),
@@ -498,6 +711,8 @@ const clusterHealthMetricsSchema = z.object({
   pods: z.object({
     running: z.number(),
     pending: z.number(),
+    // Split out of pending by the server; older servers do not send it.
+    notStarting: z.number().default(0),
     failed: z.number(),
     succeeded: z.number(),
     unknown: z.number(),
@@ -510,6 +725,87 @@ const clusterHealthMetricsSchema = z.object({
   topMemory: z.array(z.object({ name: z.string(), value: z.number() })).nullable().optional(),
   reasons: z.array(z.object({ name: z.string(), value: z.number() })).nullable().optional(),
   waiting: z.array(z.object({ name: z.string(), value: z.number() })).nullable().optional(),
+  summary: clusterSummarySchema.optional(),
+  problems: z.array(problemSchema).nullable().optional(),
+  podProblems: z.array(podProblemSchema).nullable().optional(),
+  storageProblems: z.array(storageProblemSchema).nullable().optional(),
+  workloads: z.array(workloadRowSchema).nullable().optional(),
+  alerts: z.array(alertSchema).nullable().optional(),
+  controlPlane: controlPlaneSchema.optional(),
+  namespaceUsage: z.array(namespaceUsageSchema).nullable().optional(),
+  spread: z
+    .array(z.object({ namespace: z.string(), node: z.string(), pods: z.number() }))
+    .nullable()
+    .optional(),
+  trends: trendsSchema.optional(),
+  extras: extrasSchema.optional(),
+  // One card per machine. Everything optional past the name: a cluster missing
+  // node-exporter still gets cards with the Kubernetes half filled in, and a panel with
+  // gaps beats no panel.
+  nodeDetails: z
+    .array(
+      z.object({
+        name: z.string(),
+        role: z.string(),
+        ready: z.boolean(),
+        cpuPercent: z.number(),
+        memoryPercent: z.number(),
+        diskPercent: z.number(),
+        cores: z.number(),
+        memoryTotalBytes: z.number(),
+        cpuCommittedPercent: z.number(),
+        memoryCommittedPercent: z.number(),
+        pods: z.number(),
+        podCapacity: z.number(),
+        networkRxBytes: z.number(),
+        networkTxBytes: z.number(),
+        loadPerCore: z.number(),
+        uptimeSeconds: z.number(),
+        memoryPressure: z.boolean(),
+        diskPressure: z.boolean(),
+        pidPressure: z.boolean(),
+        networkUnavailable: z.boolean(),
+        unschedulable: z.boolean(),
+        swapPercent: z.number(),
+        swapTotalBytes: z.number(),
+        inodePercent: z.number(),
+        diskReadBytes: z.number(),
+        diskWriteBytes: z.number(),
+        diskBusyPercent: z.number(),
+        ioWaitPercent: z.number(),
+        networkRxErrors: z.number(),
+        networkTxErrors: z.number(),
+        networkDrops: z.number(),
+        clockSkewSeconds: z.number(),
+        bootTimeUnix: z.number(),
+        nodeExporterUp: z.boolean(),
+        kubeletUp: z.boolean(),
+        cpuLimitPercent: z.number(),
+        memoryLimitPercent: z.number(),
+        cpuAllocatable: z.number(),
+        memoryAllocatable: z.number(),
+        kubeletVersion: z.string().optional(),
+        osImage: z.string().optional(),
+        kernel: z.string().optional(),
+        architecture: z.string().optional(),
+      }),
+    )
+    .nullable()
+    .optional(),
+  capacity: z
+    .object({
+      nodes: z.number(),
+      cores: z.number(),
+      memoryBytes: z.number(),
+      pods: z.number(),
+      podCapacity: z.number(),
+      cpuCommittedPercent: z.number(),
+      memoryCommittedPercent: z.number(),
+    })
+    .optional(),
+  // The containers behind the two rings, named well enough to open one.
+  stuck: z.array(containerIssueSchema).nullable().optional(),
+  died: z.array(containerIssueSchema).nullable().optional(),
   windowMinutes: z.number(),
   warnings: z.array(z.string()).nullable().optional(),
 })
@@ -518,10 +814,29 @@ const clusterMetricsSchema = z.object({
   configured: z.boolean(),
   error: z.string().optional(),
   health: clusterHealthMetricsSchema.optional(),
+  // Where the endpoint came from. 'auto' is one Kubby found inside the cluster, 'manual'
+  // an address somebody typed, 'default' the deployment-wide fallback — which is the only
+  // one that can be reporting a different cluster's numbers.
+  source: z.enum(['manual', 'auto', 'default']).optional(),
+  endpoint: z.string().optional(),
 })
 
 export type ClusterMetrics = z.infer<typeof clusterMetricsSchema>
 export type ClusterHealthMetrics = z.infer<typeof clusterHealthMetricsSchema>
+export type NodeDetail = NonNullable<ClusterHealthMetrics['nodeDetails']>[number]
+export type ContainerIssue = z.infer<typeof containerIssueSchema>
+export type ClusterSummary = z.infer<typeof clusterSummarySchema>
+export type Reading = z.infer<typeof readingSchema>
+export type Problem = z.infer<typeof problemSchema>
+export type PodProblem = z.infer<typeof podProblemSchema>
+export type StorageProblem = z.infer<typeof storageProblemSchema>
+export type WorkloadRow = z.infer<typeof workloadRowSchema>
+export type ClusterAlert = z.infer<typeof alertSchema>
+export type ControlPlane = z.infer<typeof controlPlaneSchema>
+export type NamespaceUsage = z.infer<typeof namespaceUsageSchema>
+export type NamedSeries = z.infer<typeof namedSeriesSchema>
+export type Extras = z.infer<typeof extrasSchema>
+export type ContainerRisk = NonNullable<Extras['risks']>[number]
 export type MetricPoint = z.infer<typeof pointSchema>
 
 // ---------------------------------------------------------------- helm

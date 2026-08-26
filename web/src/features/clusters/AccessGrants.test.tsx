@@ -60,13 +60,16 @@ function mockApi(grantDelayMs: number) {
   )
 }
 
-function renderDetail() {
+/** Grants live under Access, which is a section of its own rather than the last panel
+ *  of one long scroll. */
+async function renderDetail() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
       <ClusterDetail cluster={CLUSTER} canManage onBack={() => undefined} />
     </QueryClientProvider>,
   )
+  await userEvent.click(await screen.findByRole('button', { name: /Access/ }))
 }
 
 afterEach(() => {
@@ -77,7 +80,7 @@ describe('cluster access grants', () => {
   // The reported symptom: the dropdown showed the old value for a beat, then jumped.
   it('shows the chosen level immediately, without waiting for the server', async () => {
     mockApi(500)
-    renderDetail()
+    await renderDetail()
 
     const select = await screen.findByLabelText('Access for member@example.com')
     expect(select).toHaveValue('')
@@ -107,7 +110,7 @@ describe('cluster access grants', () => {
         return json({})
       }),
     )
-    renderDetail()
+    await renderDetail()
 
     const select = await screen.findByLabelText('Access for member@example.com')
     await userEvent.selectOptions(select, 'write')

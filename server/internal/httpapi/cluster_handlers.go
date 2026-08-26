@@ -345,6 +345,13 @@ func (h *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An operator who has just typed an address, or cleared one to go back to whatever
+	// Kubby can find, is asking for it to take effect now. Half an hour of a remembered
+	// search would read as the change not having worked.
+	if req.MetricsURL != nil {
+		h.svc.ForgetDiscoveredMetrics(c.ID.String())
+	}
+
 	if req.MetricsPassword != "" || req.ClearMetricsPassword {
 		var sealed []byte
 		if !req.ClearMetricsPassword {

@@ -45,6 +45,9 @@ export function typeKeyForKind(kind: string): string | null {
     CronJob: 'batch/cronjobs',
     Node: 'nodes',
     Service: 'services',
+    PersistentVolumeClaim: 'persistentvolumeclaims',
+    PersistentVolume: 'persistentvolumes',
+    Namespace: 'namespaces',
   }
   return map[kind] ?? null
 }

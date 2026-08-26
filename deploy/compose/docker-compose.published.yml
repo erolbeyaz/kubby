@@ -1,0 +1,79 @@
+# Kubby from Docker Hub — the shortest path to a running install.
+#
+# The same two containers as docker-compose.yml, with one difference: the image is named
+# here rather than left to .env. Nothing is built, nothing is cloned. On a fresh machine
+# with Docker, this file and a .env are the whole install.
+#
+#   curl -O https://raw.githubusercontent.com/erolbeyaz/kubby/main/deploy/compose/docker-compose.published.yml
+#   curl -o .env https://raw.githubusercontent.com/erolbeyaz/kubby/main/deploy/compose/.env.published.example
+#   # fill in the two secrets the file marks REQUIRED, then:
+#   docker compose -f docker-compose.published.yml up -d
+#
+# Upgrading is a tag change and `up -d`. Rolling back is the same in reverse — which is
+# why the tag is a version and never `latest`: `latest` cannot tell you what is running.
+#
+# Building it yourself instead? Use docker-compose.yml and set KUBBY_IMAGE.
+
+name: ${COMPOSE_PROJECT_NAME:-kubby}
+
+services:
+  postgres:
+    # Pinned by digest as well as tag: a tag can be moved, a digest cannot, and this
+    # holds every credential Kubby stores.
+    image: ${REGISTRY:-docker.io}/library/postgres:18.6@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${KUBBY_DB_NAME:-kubby}
+      POSTGRES_USER: ${KUBBY_DB_USER:-kubby}
+      POSTGRES_PASSWORD: ${KUBBY_DB_PASSWORD:?set KUBBY_DB_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - kubby-db:/var/lib/postgresql
+    # Deliberately not published. Nothing outside this compose project needs to reach the
+    # database, and a port on the host is a port somebody can find.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KUBBY_DB_USER:-kubby} -d ${KUBBY_DB_NAME:-kubby}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  kubby:
+    # The published image, with the version written in. Override KUBBY_IMAGE to run a
+    # different tag or your own build without editing this file.
+    image: ${KUBBY_IMAGE:-docker.io/ebeyaz/kubby:0.10.0}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: [.env]
+    environment:
+      # Fixed here rather than left to .env: postgres is the service name on this
+      # network, and getting it wrong is the most common way a first start fails.
+      KUBBY_DB_HOST: postgres
+      KUBBY_DB_PORT: "5432"
+      KUBBY_HTTP_ADDR: ":8080"
+    ports:
+      - "${KUBBY_HOST_PORT:-8080}:8080"
+
+    # The image is distroless and runs as 65532 with no shell. These keep it that way.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      # The cluster terminal writes a per-session kubeconfig and any files dropped into
+      # it. In memory, so a read-only root filesystem stays read-only and nothing a
+      # session wrote survives it.
+      - /tmp:mode=1777,size=128m
+
+    healthcheck:
+      test: ["CMD", "/kubby", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  kubby-db:
