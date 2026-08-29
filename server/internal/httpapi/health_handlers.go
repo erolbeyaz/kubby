@@ -12,6 +12,7 @@ import (
 	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/health"
+	"github.com/erolbeyaz/kubby/internal/logsearch"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
@@ -27,6 +28,7 @@ func (h *resourceHandlers) clusterHealth(w http.ResponseWriter, r *http.Request)
 		Namespaces:  namespacesFrom(r.URL.Query().Get("namespace")),
 		Sidecars:    h.sidecars,
 		EventWindow: h.eventWindow,
+		LogFindings: h.logFindings(c.ID.String()),
 	}, impersonationFor(r, c))
 	if err != nil {
 		writeResourceError(w, r, err)
@@ -81,6 +83,7 @@ func (h *resourceHandlers) fleetHealth(w http.ResponseWriter, r *http.Request) {
 		return h.svc.Health(ctx, c, cluster.HealthOptions{
 			Sidecars:    h.sidecars,
 			EventWindow: h.eventWindow,
+			LogFindings: h.logFindings(c.ID.String()),
 		}, impersonationFor(r, c))
 	}
 
@@ -235,3 +238,19 @@ func secretTarget(w http.ResponseWriter, r *http.Request) (namespace, name strin
 
 // defaultEventWindow is how far back the health panel reads warning events.
 const defaultEventWindow = time.Hour
+
+// logFindings is what the sweeper last saw for this cluster.
+//
+// Only when the sweep succeeded. A store that could not be read contributes nothing
+// here rather than an empty list, because the panel's job is to show what is wrong and
+// "we could not look" is not the same as "nothing is".
+func (h *resourceHandlers) logFindings(clusterID string) []logsearch.Finding {
+	if h.logs == nil {
+		return nil
+	}
+	found := h.logs.Findings(clusterID)
+	if found.State != cluster.LogsStateOK {
+		return nil
+	}
+	return found.Findings
+}

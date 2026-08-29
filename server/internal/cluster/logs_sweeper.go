@@ -62,27 +62,50 @@ type LogSweeper struct {
 	clusters *store.ClusterRepo
 	logger   *slog.Logger
 	interval time.Duration
-	window   time.Duration
+	// analysis supplies the rules, the field names and the thresholds at the moment a
+	// sweep runs, so an edited rule takes effect on the next tick rather than on the
+	// next restart (ADR-102).
+	analysis LogAnalysisFunc
 
 	mu      sync.RWMutex
 	results map[string]*LogFindings
 }
 
-func NewLogSweeper(svc *Service, db *store.DB, logger *slog.Logger, interval, window time.Duration) *LogSweeper {
+// LogAnalysisFunc reports what a sweep should run. It is a function rather than a
+// settings service so this package does not depend on the one that stores them.
+type LogAnalysisFunc func(ctx context.Context) (logsearch.Fields, []logsearch.Rule, logsearch.SweepOptions, error)
+
+func NewLogSweeper(svc *Service, db *store.DB, logger *slog.Logger, interval time.Duration, analysis LogAnalysisFunc) *LogSweeper {
 	if interval <= 0 {
 		interval = time.Minute
-	}
-	if window <= 0 {
-		window = 15 * time.Minute
 	}
 	return &LogSweeper{
 		svc:      svc,
 		clusters: db.Clusters(),
 		logger:   logger.With(slog.String("component", "log-sweeper")),
 		interval: interval,
-		window:   window,
+		analysis: analysis,
 		results:  map[string]*LogFindings{},
 	}
+}
+
+// configure reads the analysis settings, falling back to what Kubby ships with.
+//
+// A settings read that fails must not stop the sweep: the built-in rules are the ones
+// that were running before anybody edited anything, and finding nothing because a
+// database hiccuped is worse than finding what the defaults find.
+func (s *LogSweeper) configure(ctx context.Context) (logsearch.Fields, []logsearch.Rule, logsearch.SweepOptions) {
+	if s.analysis == nil {
+		return logsearch.DefaultFields(), logsearch.DefaultRules(), logsearch.SweepOptions{}
+	}
+
+	fields, rules, opts, err := s.analysis(ctx)
+	if err != nil {
+		s.logger.Warn("could not read the log analysis settings; using the built-in rules",
+			slog.String("error", err.Error()))
+		return logsearch.DefaultFields(), logsearch.DefaultRules(), logsearch.SweepOptions{}
+	}
+	return fields, rules, opts
 }
 
 // Findings reports the last answer for a cluster.
@@ -102,8 +125,7 @@ func (s *LogSweeper) Findings(clusterID string) *LogFindings {
 
 // Run sweeps every cluster until the context is cancelled.
 func (s *LogSweeper) Run(ctx context.Context) {
-	s.logger.Info("log sweeping started",
-		slog.Duration("interval", s.interval), slog.Duration("window", s.window))
+	s.logger.Info("log sweeping started", slog.Duration("interval", s.interval))
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -127,17 +149,21 @@ func (s *LogSweeper) sweep(ctx context.Context) {
 		return
 	}
 
+	// Read once per sweep rather than per cluster: it is one answer for the whole fleet
+	// and a fleet of twenty would otherwise mean twenty identical reads a minute.
+	fields, rules, opts := s.configure(ctx)
+
 	for _, c := range clusters {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		s.sweepOne(ctx, c)
+		s.sweepOne(ctx, c, fields, rules, opts)
 	}
 }
 
-func (s *LogSweeper) sweepOne(ctx context.Context, c *store.Cluster) {
+func (s *LogSweeper) sweepOne(ctx context.Context, c *store.Cluster, fields logsearch.Fields, rules []logsearch.Rule, opts logsearch.SweepOptions) {
 	id := c.ID.String()
 
 	if c.LogsURL == "" || c.LogsIndex == "" {
@@ -149,13 +175,13 @@ func (s *LogSweeper) sweepOne(ctx context.Context, c *store.Cluster) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	client, err := s.svc.LogsClient(ctx, c)
+	client, err := s.svc.LogsClient(ctx, c, fields)
 	if err != nil {
 		s.unknown(id, c.Name, err)
 		return
 	}
 
-	findings, err := client.Sweep(ctx, logsearch.DefaultRules(), s.window)
+	findings, err := client.Sweep(ctx, rules, opts)
 	if err != nil {
 		s.unknown(id, c.Name, err)
 		return
@@ -165,7 +191,7 @@ func (s *LogSweeper) sweepOne(ctx context.Context, c *store.Cluster) {
 		State:    LogsStateOK,
 		Findings: findings,
 		SweptAt:  time.Now().UTC(),
-		Window:   s.window,
+		Window:   opts.Window,
 	}
 	result.index()
 	result.rollUp(s.resolveOwners(ctx, c))

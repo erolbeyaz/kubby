@@ -122,10 +122,17 @@ type All struct {
 	PodDebug  PodDebug  `json:"podDebug"`
 	Metrics   Metrics   `json:"metrics"`
 	AuditSink AuditSink `json:"auditSink"`
+	// LogAnalysis is what counts as a problem in a log line. Never empty: an admin who
+	// has changed nothing still needs to see what is running.
+	LogAnalysis LogAnalysis `json:"logAnalysis"`
 }
 
 func (s *Service) All(ctx context.Context) (*All, error) {
-	out := &All{NodeShell: DefaultNodeShell(), PodDebug: DefaultPodDebug()}
+	out := &All{
+		NodeShell:   DefaultNodeShell(),
+		PodDebug:    DefaultPodDebug(),
+		LogAnalysis: DefaultLogAnalysis(),
+	}
 
 	if _, err := s.repo.Get(ctx, KeyNodeShell, &out.NodeShell); err != nil {
 		return nil, err
@@ -138,6 +145,17 @@ func (s *Service) All(ctx context.Context) (*All, error) {
 	}
 	if _, err := s.repo.Get(ctx, KeyAuditSink, &out.AuditSink); err != nil {
 		return nil, err
+	}
+
+	// A stored value replaces the defaults wholesale rather than merging into them: a
+	// rule an admin deleted must stay deleted.
+	stored := LogAnalysis{}
+	found, err := s.repo.Get(ctx, KeyLogAnalysis, &stored)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		out.LogAnalysis = stored
 	}
 
 	// Whether a credential exists is a fact about configuration; the credential itself

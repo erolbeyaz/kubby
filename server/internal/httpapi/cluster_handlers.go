@@ -693,9 +693,10 @@ type logFindingsResponse struct {
 
 // logFindings reports what this cluster's own logs are saying.
 //
-// Narrowed to the namespaces this reader may see. Not hidden in the client — a finding
-// carries a line out of an application's log, and someone who cannot list a namespace's
-// pods may not read its logs either.
+// Scoped by the cluster grant and nothing finer, which is correct rather than a
+// shortcut: Kubby's grants are (user, cluster), so a reader who reaches this endpoint
+// can already list every pod in the cluster and open any of their logs. A namespace
+// filter here would narrow the summary of what it already lets them read in full.
 func (h *clusterHandlers) logFindings(w http.ResponseWriter, r *http.Request) {
 	c, _, ok := h.resolve(w, r, store.AccessRead)
 	if !ok {
@@ -711,22 +712,19 @@ func (h *clusterHandlers) logFindings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	found := h.logs.Findings(c.ID.String())
+	findings := found.Findings
+	if findings == nil {
+		// An empty array rather than null: the client tells "nothing is wrong" from
+		// "nothing was looked at" by the state, not by the shape of this field.
+		findings = []logsearch.Finding{}
+	}
+
 	writeJSON(w, http.StatusOK, logFindingsResponse{
 		State:    found.State,
 		Detail:   found.Detail,
 		SweptAt:  rfc3339(found.SweptAt),
-		Findings: visibleFindings(found.Findings),
+		Findings: findings,
 	})
-}
-
-// visibleFindings is where a namespace filter will go once findings are joined to rows
-// and the reader's grants are in hand. Today a grant is per cluster, and this reader
-// already holds one for this cluster.
-func visibleFindings(findings []logsearch.Finding) []logsearch.Finding {
-	if findings == nil {
-		return []logsearch.Finding{}
-	}
-	return findings
 }
 
 func rfc3339(t time.Time) string {

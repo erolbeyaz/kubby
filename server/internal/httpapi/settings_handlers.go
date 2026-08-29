@@ -95,6 +95,22 @@ func (h *settingsHandlers) saveMetrics(w http.ResponseWriter, r *http.Request) {
 	h.read(w, r)
 }
 
+func (h *settingsHandlers) saveLogAnalysis(w http.ResponseWriter, r *http.Request) {
+	var body settings.LogAnalysis
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	_, user := principal(r)
+	if err := h.svc.SaveLogAnalysis(r.Context(), body, user.ID); err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.record(r, audit.ActionSettingsChanged, "log-analysis")
+	h.read(w, r)
+}
+
 type auditSinkBody struct {
 	settings.AuditSink
 	Token      string `json:"token,omitempty"`

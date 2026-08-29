@@ -66,7 +66,7 @@ func sweepAgainst(t *testing.T, buckets ...bucket) ([]Finding, map[string]any) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	findings, err := client.Sweep(context.Background(), DefaultRules(), 15*time.Minute)
+	findings, err := client.Sweep(context.Background(), DefaultRules(), SweepOptions{Window: 15 * time.Minute})
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestSweepAsksOneQuestionAndGroupsItByPod(t *testing.T) {
 func TestSweepWithNoRulesAsksNothing(t *testing.T) {
 	client, _ := New(Config{URL: "http://127.0.0.1:1", Index: "logs-*"})
 
-	findings, err := client.Sweep(context.Background(), nil, time.Minute)
+	findings, err := client.Sweep(context.Background(), nil, SweepOptions{Window: time.Minute})
 	if err != nil || findings != nil {
 		t.Errorf("Sweep with no rules returned %v, %v", findings, err)
 	}

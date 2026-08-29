@@ -14,6 +14,7 @@ import (
 
 	"github.com/erolbeyaz/kubby/internal/health"
 	"github.com/erolbeyaz/kubby/internal/k8s"
+	"github.com/erolbeyaz/kubby/internal/logsearch"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
 
@@ -66,6 +67,10 @@ type HealthOptions struct {
 	Sidecars   []string
 	// EventWindow is how far back warning events are read.
 	EventWindow time.Duration
+	// LogFindings is what the cluster's own logs are saying, swept elsewhere. Passed in
+	// rather than read here: it comes from a system that may be unreachable while the
+	// cluster is perfectly fine, and one being down must not fail the other.
+	LogFindings []logsearch.Finding
 }
 
 // Health sweeps a cluster for everything that is wrong.
@@ -89,6 +94,7 @@ func (s *Service) Health(ctx context.Context, cluster *store.Cluster, opts Healt
 			&health.StorageDetector{Namespaces: opts.Namespaces},
 			&health.EventDetector{Namespaces: opts.Namespaces, Window: opts.EventWindow},
 			&health.CertificateDetector{Namespaces: opts.Namespaces},
+			&health.LogDetector{Findings: opts.LogFindings, Namespaces: opts.Namespaces},
 		},
 	}
 	return collector.Collect(ctx), nil

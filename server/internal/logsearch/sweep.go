@@ -49,14 +49,34 @@ const sliceCount = 3
 // complaining has one incident, not two hundred, and the tail adds nothing.
 const maxPods = 200
 
-// minCount is how many matching lines a pod must have written before it is worth
-// saying anything.
-//
-// A retry that succeeded on the second attempt logged one failure, and reporting that
-// as a problem is how a list fills with marks nobody reads. Something genuinely broken
-// says so repeatedly — the failure this was built for repeated every fifteen seconds
-// for twenty-two hours.
-const minCount = 3
+// SweepOptions is how hard to look and how much to ignore.
+type SweepOptions struct {
+	// Window is how far back to read.
+	Window time.Duration
+	// MinCount is how many matching lines a pod must have written before it is worth
+	// saying anything.
+	//
+	// A retry that succeeded on the second attempt logged one failure, and reporting
+	// that as a problem is how a list fills with marks nobody reads. Something genuinely
+	// broken says so repeatedly — the failure this was built for repeated every fifteen
+	// seconds for twenty-two hours.
+	MinCount int
+}
+
+const (
+	defaultWindow   = 15 * time.Minute
+	defaultMinCount = 3
+)
+
+func (o SweepOptions) withDefaults() SweepOptions {
+	if o.Window <= 0 {
+		o.Window = defaultWindow
+	}
+	if o.MinCount <= 0 {
+		o.MinCount = defaultMinCount
+	}
+	return o
+}
 
 // maxSampleLine is what a tooltip can hold. A Java stack trace arrives as one document
 // with thirty lines in it, and twenty-nine of them are frames.
@@ -68,20 +88,18 @@ const maxSampleLine = 400
 // already is. Reading logs pod by pod would be thousands of requests against the API
 // server of the cluster being watched, to learn something the log store can answer in a
 // hundred milliseconds.
-func (c *Client) Sweep(ctx context.Context, rules []Rule, window time.Duration) ([]Finding, error) {
+func (c *Client) Sweep(ctx context.Context, rules []Rule, opts SweepOptions) ([]Finding, error) {
 	if len(rules) == 0 {
 		return nil, nil
 	}
-	if window <= 0 {
-		window = 15 * time.Minute
-	}
+	opts = opts.withDefaults()
 	fields := c.cfg.Fields.withDefaults()
 
 	// How the message field is indexed decides what kind of query can find a substring
 	// in it, and getting that wrong finds nothing without erroring.
 	mapping := c.messageMapping(ctx, fields.Message)
 
-	query := sweepQuery(rules, fields, window, mapping)
+	query := sweepQuery(rules, fields, opts.Window, mapping)
 	if query == nil {
 		return nil, nil
 	}
@@ -95,7 +113,7 @@ func (c *Client) Sweep(ctx context.Context, rules []Rule, window time.Duration) 
 	if err := json.Unmarshal(payload, &response); err != nil {
 		return nil, fmt.Errorf("could not read the search result: %w", err)
 	}
-	return response.findings(rules, window), nil
+	return response.findings(rules, opts.MinCount), nil
 }
 
 func sweepQuery(rules []Rule, fields Fields, window time.Duration, mapping MessageMapping) map[string]any {
@@ -227,7 +245,7 @@ func (v valueAgg) time() time.Time {
 	return time.UnixMilli(int64(v.Value)).UTC()
 }
 
-func (r sweepResponse) findings(rules []Rule, _ time.Duration) []Finding {
+func (r sweepResponse) findings(rules []Rule, minCount int) []Finding {
 	byName := make(map[string]Rule, len(rules))
 	for _, rule := range rules {
 		byName[rule.Name] = rule
@@ -235,7 +253,7 @@ func (r sweepResponse) findings(rules []Rule, _ time.Duration) []Finding {
 
 	findings := make([]Finding, 0, len(r.Aggregations.Pods.Buckets))
 	for _, bucket := range r.Aggregations.Pods.Buckets {
-		if bucket.DocCount < minCount {
+		if bucket.DocCount < int64(minCount) {
 			continue
 		}
 		rule, ok := byName[winningRule(bucket.Rules.Buckets, rules)]

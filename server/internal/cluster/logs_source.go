@@ -29,11 +29,15 @@ func (s *Service) LogsConfig(ctx context.Context, cluster *store.Cluster) (logse
 }
 
 // LogsClient builds a reader for this cluster's logs, or reports that it has none.
-func (s *Service) LogsClient(ctx context.Context, cluster *store.Cluster) (*logsearch.Client, error) {
+//
+// The field names come from the caller because they are configuration shared by the
+// whole deployment, while the address and credential belong to this cluster.
+func (s *Service) LogsClient(ctx context.Context, cluster *store.Cluster, fields logsearch.Fields) (*logsearch.Client, error) {
 	cfg, err := s.LogsConfig(ctx, cluster)
 	if err != nil {
 		return nil, err
 	}
+	cfg.Fields = fields
 	return logsearch.New(cfg)
 }
 

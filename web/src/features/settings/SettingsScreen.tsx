@@ -7,16 +7,18 @@ import { ApiError, api, type Me } from '@/lib/api'
 import { UsersScreen } from '@/features/users/UsersScreen'
 
 import { AuditSinkSection } from './AuditSinkSection'
+import { LogAnalysisSection } from './LogAnalysisSection'
 import { MetricsSection } from './MetricsSection'
 import { NodeShellSection } from './NodeShellSection'
 import { PodDebugSection } from './PodDebugSection'
 
-type Tab = 'users' | 'shells' | 'metrics' | 'audit'
+type Tab = 'users' | 'shells' | 'metrics' | 'logs' | 'audit'
 
 const TABS: { id: Tab; label: string; icon: IconName; hint: string }[] = [
   { id: 'users', label: 'Users', icon: 'shield', hint: 'Who may sign in, and what they may do' },
   { id: 'shells', label: 'Shells', icon: 'terminal', hint: 'Where a shell pod or debug container comes from' },
   { id: 'metrics', label: 'Metrics', icon: 'monitor', hint: 'Where measurements over time are read from' },
+  { id: 'logs', label: 'Log analysis', icon: 'health', hint: 'What counts as a problem in a log line' },
   { id: 'audit', label: 'Audit shipping', icon: 'events', hint: 'Where the audit trail is copied to' },
 ]
 
@@ -83,6 +85,7 @@ export function SettingsScreen({ me }: { me: Me }) {
           </>
         )}
         {settings.data && tab === 'metrics' && <MetricsSection value={settings.data.metrics} />}
+        {settings.data && tab === 'logs' && <LogAnalysisSection value={settings.data.logAnalysis} />}
         {settings.data && tab === 'audit' && <AuditSinkSection value={settings.data.auditSink} />}
       </div>
     </div>

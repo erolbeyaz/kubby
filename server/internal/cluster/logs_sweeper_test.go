@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/erolbeyaz/kubby/internal/cluster"
+	"github.com/erolbeyaz/kubby/internal/logsearch"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
 
@@ -36,7 +37,11 @@ func sweeperHarness(t *testing.T, logsURL, index string) (*cluster.LogSweeper, *
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return cluster.NewLogSweeper(svc, db, logger, time.Minute, 15*time.Minute), created
+	analysis := func(context.Context) (logsearch.Fields, []logsearch.Rule, logsearch.SweepOptions, error) {
+		return logsearch.DefaultFields(), logsearch.DefaultRules(),
+			logsearch.SweepOptions{Window: 15 * time.Minute}, nil
+	}
+	return cluster.NewLogSweeper(svc, db, logger, time.Minute, analysis), created
 }
 
 // sweepOnce runs the sweeper's loop long enough for its first pass and stops it.

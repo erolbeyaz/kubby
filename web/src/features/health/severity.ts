@@ -10,6 +10,10 @@ export const CATEGORY_LABELS: Record<string, string> = {
   storage: 'Storage',
   event: 'Recent warnings',
   certificate: 'Certificates',
+  // What the applications say about themselves. Its own group because the claim is of a
+  // different kind: everything above is read from the Kubernetes API, this is a pattern
+  // matched against somebody's log output (ADR-140).
+  logs: 'Application logs',
 }
 
 export function severityColour(severity: string): string {

@@ -93,7 +93,7 @@ func TestSweepAgainstARealStore(t *testing.T) {
 	}
 
 	started := time.Now()
-	findings, err := client.Sweep(context.Background(), logsearch.DefaultRules(), 15*time.Minute)
+	findings, err := client.Sweep(context.Background(), logsearch.DefaultRules(), logsearch.SweepOptions{Window: 15 * time.Minute})
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}

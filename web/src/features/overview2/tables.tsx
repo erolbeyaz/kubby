@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import type { ClusterAlert, PodProblem, Reading, StorageProblem, WorkloadRow } from '@/lib/api'
+import type { ClusterAlert, LogFinding, PodProblem, Reading, StorageProblem, WorkloadRow } from '@/lib/api'
 
 import { format, formatBytes } from '@/features/metrics/charts'
 
@@ -214,6 +214,99 @@ function Triple({
 }
 
 /** Degraded workloads — what is short, by how much, and whether it is moving. */
+/**
+ * What the pods are saying about themselves.
+ *
+ * Ordered by how long it has been true rather than by how loud it is. A pod writing five
+ * hundred lines a second for a minute is noisier than one that has been quietly failing
+ * since yesterday, and the second is the one nobody has noticed.
+ */
+export function LogFindingTable({
+  rows,
+  onOpen,
+}: {
+  rows: LogFinding[]
+  onOpen?: ((namespace: string, pod: string) => void) | undefined
+}) {
+  if (rows.length === 0) {
+    return <Quiet>No pod is reporting an error in its own logs.</Quiet>
+  }
+
+  const ordered = [...rows].sort(
+    (a, b) => Date.parse(a.firstSeen) - Date.parse(b.firstSeen) || b.count - a.count,
+  )
+
+  return (
+    <Scroller rows={ordered.length}>
+      <table className="w-full" style={{ fontSize: 'var(--text-micro)' }}>
+        <thead>
+          <tr>
+            <Th>Namespace / Pod</Th>
+            <Th>Rule</Th>
+            <Th align="right">Failing for</Th>
+            <Th align="right">Lines</Th>
+            <Th>What the log says</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {ordered.map((row) => (
+            <Row
+              key={`${row.namespace}/${row.pod}/${row.rule}`}
+              onOpen={onOpen ? () => onOpen(row.namespace, row.pod) : undefined}
+            >
+              <Td top>
+                <span className="block font-mono" style={{ color: 'var(--text-primary)' }}>
+                  {row.namespace}/{row.pod}
+                </span>
+                {row.pods && row.pods > 1 && (
+                  <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                    and {row.pods - 1} more pod{row.pods > 2 ? 's' : ''}
+                  </span>
+                )}
+              </Td>
+              <Td top>
+                <Pill tone={row.severity === 'error' ? 'bad' : 'warn'}>{row.rule}</Pill>
+                <span className="ml-1" style={{ color: 'var(--text-muted)' }}>
+                  {row.class}
+                </span>
+              </Td>
+              <Td top align="right">
+                {failingFor(row)}
+              </Td>
+              <Td top align="right">
+                {format(row.count)}
+              </Td>
+              <Td top>
+                {row.summary && (
+                  <span className="block font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {row.summary}
+                  </span>
+                )}
+                <span className="block font-mono" style={{ color: 'var(--text-muted)' }}>
+                  {row.sample}
+                </span>
+              </Td>
+            </Row>
+          ))}
+        </tbody>
+      </table>
+    </Scroller>
+  )
+}
+
+/** How long this has been true — the number that decides whether to look now. */
+function failingFor(row: LogFinding): string {
+  const span = Date.parse(row.lastSeen) - Date.parse(row.firstSeen)
+  if (!Number.isFinite(span) || span < 60_000) return 'under a minute'
+
+  const minutes = Math.round(span / 60_000)
+  if (minutes < 60) return `${minutes}m`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ${minutes % 60}m`
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
 export function DegradedTable({
   rows,
   scalers,

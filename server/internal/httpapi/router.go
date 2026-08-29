@@ -377,6 +377,7 @@ func New(d Deps) *Server {
 				st.Put("/settings/node-shell", settingsAPI.saveNodeShell)
 				st.Put("/settings/pod-debug", settingsAPI.savePodDebug)
 				st.Put("/settings/metrics", settingsAPI.saveMetrics)
+				st.Put("/settings/log-analysis", settingsAPI.saveLogAnalysis)
 				st.Put("/settings/audit-sink", settingsAPI.saveAuditSink)
 			})
 		})

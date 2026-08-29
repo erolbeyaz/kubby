@@ -410,6 +410,27 @@ export const kubbySettingsSchema = z.object({
     scheme: z.string().optional(),
     dataStream: z.boolean().default(false),
   }),
+  // What counts as a problem in a log line, and where in a document to look for it.
+  logAnalysis: z.object({
+    fields: z.object({
+      timestamp: z.string().optional(),
+      message: z.string().optional(),
+      pod: z.string().optional(),
+      namespace: z.string().optional(),
+      container: z.string().optional(),
+    }),
+    rules: z.array(
+      z.object({
+        name: z.string(),
+        class: z.string(),
+        match: z.array(z.string()),
+        capture: z.array(z.string()).optional(),
+        disabled: z.boolean().optional(),
+      }),
+    ),
+    windowMinutes: z.number().optional(),
+    minCount: z.number().optional(),
+  }),
 })
 
 export type KubbySettings = z.infer<typeof kubbySettingsSchema>
@@ -1239,6 +1260,9 @@ export const api = {
 
   saveMetrics: (body: KubbySettings['metrics'] & { password?: string; clearPassword?: boolean }) =>
     request('/api/v1/settings/metrics', kubbySettingsSchema, { method: 'PUT', body }),
+
+  saveLogAnalysis: (body: KubbySettings['logAnalysis']) =>
+    request('/api/v1/settings/log-analysis', kubbySettingsSchema, { method: 'PUT', body }),
 
   saveAuditSink: (body: KubbySettings['auditSink'] & { token?: string; clearToken?: boolean }) =>
     request('/api/v1/settings/audit-sink', kubbySettingsSchema, { method: 'PUT', body }),

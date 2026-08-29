@@ -290,6 +290,19 @@ smoke-audit: ## Verify the audit sinks against real Elasticsearch and Loki
 	@echo "     Kibana  http://localhost:5601"
 	@echo "     Grafana http://localhost:3000"
 
+.PHONY: smoke-logfindings
+smoke-logfindings: ## Verify log analysis against a real Elasticsearch, both field mappings
+	@echo "==> starting Elasticsearch"
+	docker compose --profile elastic up -d elasticsearch
+	@until curl -sf http://localhost:9200/_cluster/health >/dev/null; do sleep 3; done
+	@echo "==> seeding and sweeping"
+	@# Twice: against a message field mapped `text` and one mapped `keyword`. The two
+	@# need different queries for the same substring, and getting it wrong finds nothing
+	@# without erroring — which is how this shipped broken the first time.
+	cd $(SERVER_DIR) && KUBBY_TEST_ELASTICSEARCH=http://localhost:9200 \
+		TZ=UTC go test ./internal/logsearch/ -run Smoke -count=1 -v
+	@echo "OK — findings, summaries and thresholds hold under both mappings"
+
 .PHONY: docker-verify
 docker-verify: ## Check the built image is what it claims: right tools, right user, no shell
 	@echo "==> kubectl"

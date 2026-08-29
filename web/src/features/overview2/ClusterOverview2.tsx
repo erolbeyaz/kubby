@@ -8,6 +8,7 @@ import {
   api,
   type Cluster,
   type ClusterHealthMetrics,
+  type LogFindings,
   type NamedSeries,
 } from '@/lib/api'
 
@@ -24,6 +25,7 @@ import {
   AlertTable,
   DegradedTable,
   EventTable,
+  LogFindingTable,
   PodProblemTable,
   StorageTable,
 } from './tables'
@@ -62,6 +64,15 @@ export function ClusterOverview2({
     queryKey: ['cluster-metrics', cluster.id, window],
     queryFn: ({ signal }) => api.clusterMetrics(cluster.id, window, signal),
     refetchInterval: 30_000,
+  })
+
+  // What the applications say about themselves. Its own query because it comes from a
+  // different system: the log store can be unreachable while the cluster is fine, and
+  // one being down must not empty the other.
+  const logs = useQuery({
+    queryKey: ['log-findings', cluster.id],
+    queryFn: ({ signal }) => api.logFindings(cluster.id, signal),
+    refetchInterval: 60_000,
   })
 
   const events = useQuery({
@@ -371,6 +382,34 @@ export function ClusterOverview2({
               />
             </Panel>
           </div>
+
+          {/* Beside the pods Kubernetes calls broken, because these are the ones it
+              calls healthy. A pod can be Running and Ready while its log says it cannot
+              reach its database, and that row is green everywhere else on this screen. */}
+          {logs.data?.state !== 'off' && (
+            <div className="md:col-span-2" style={{ gridColumn: 'span 2' }}>
+              <Panel
+                title="Pods reporting errors in their logs"
+                meta={logMeta(logs.data)}
+                tone={logTone(logs.data)}
+              >
+                {logs.data?.state === 'unknown' ? (
+                  // Never a green empty table: an unreachable store and a cluster with
+                  // nothing wrong looked identical once already (ADR-111, ADR-142).
+                  <Quiet>
+                    The log source could not be read, so nothing can be concluded about what
+                    these pods are reporting.
+                    {logs.data.detail ? ` ${logs.data.detail}` : ''}
+                  </Quiet>
+                ) : (
+                  <LogFindingTable
+                    rows={logs.data?.findings ?? []}
+                    onOpen={(namespace, pod) => onOpenObject('Pod', namespace, pod)}
+                  />
+                )}
+              </Panel>
+            </div>
+          )}
         </Grid>
       </Section>
 
@@ -1054,4 +1093,21 @@ function conditionTone(health: ClusterHealthMetrics | undefined): 'error' | 'war
 
 function spreadColumns(spread: ClusterHealthMetrics['spread']): string[] {
   return [...new Set((spread ?? []).map((entry) => entry.node))].sort()
+}
+
+/** How many pods are complaining, or why that cannot be said. */
+function logMeta(findings: LogFindings | undefined): string {
+  if (!findings) return 'reading…'
+  if (findings.state === 'unknown') return 'log source unreachable'
+
+  const pods = findings.findings.length
+  if (pods === 0) return 'nothing reported'
+  return `${pods} pod${pods === 1 ? '' : 's'} · longest-running first`
+}
+
+function logTone(findings: LogFindings | undefined): 'error' | 'warn' | undefined {
+  if (!findings) return undefined
+  if (findings.state === 'unknown') return 'warn'
+  if (findings.findings.some((finding) => finding.severity === 'error')) return 'error'
+  return findings.findings.length > 0 ? 'warn' : undefined
 }

@@ -140,7 +140,8 @@ func run() error {
 
 	// What the pods are saying about themselves. On a schedule so the answer is already
 	// on the row when a list is drawn, rather than a query in front of every reader.
-	logSweeper := cluster.NewLogSweeper(clusterService, db, logger, time.Minute, 15*time.Minute)
+	logSweeper := cluster.NewLogSweeper(clusterService, db, logger, time.Minute,
+		settingsService.LogAnalysisConfig)
 	go logSweeper.Run(ctx)
 
 	server := httpapi.New(httpapi.Deps{
