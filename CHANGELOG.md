@@ -5,6 +5,71 @@ sürümler kırıcı değişiklik içerebilir.
 
 ---
 
+## 0.11.0 — 2026-08-30
+
+Bir pod `Running` ve `Ready` olabiliyor, sağlık probları geçiyor, ama logunda
+veritabanına ulaşamadığını yazıyor. Kubernetes bunu bilmiyor; yüzlerce pod'da bu yalnızca
+tek tek loglara girerek anlaşılıyor. Bu sürüm o soruyu ekrana taşıyor.
+
+### Log kaynaklı sorun tespiti
+
+- **Cluster başına Elasticsearch bağlantısı** (`/manage` → Logs), audit sink'inden
+  bağımsız. Adres, index deseni ve kimlik bilgisi operatörden alınır; desen tahmin
+  edilmez (ADR-138)
+- **Bağlantı testi kaydetmeden çalışır** ve bir tam belge gösterir — hangi alanın mesajı,
+  hangisinin pod adını taşıdığı oradan okunur
+- **Dakikada tek sorgu, cluster başına.** Kubby log toplamaz; node'daki shipper zaten her
+  satırı okuyor. Kubernetes API'sine ek istek gitmez. Üretim ortamında ölçülen: tek
+  istek, 105 ms, 77 shard
+- **Listede ayrı bir işaret** ve üzerine gelince kart: kural, sınıf, satır sayısı, ne
+  kadar süredir devam ettiği, çıkarılmış özet (`database Orders · user svc-orders`) ve
+  tek örnek satır. Kubernetes'in üçgeninden ayrı bir şekil — biri olgu, diğeri çıkarım
+  (ADR-140)
+- **Workload'a toplanıyor:** dokuz replikanın aynı hatası dokuz satır değil, bir satır
+  ve "9 pods"
+- **Sağlık panelinde `Application logs`** kategorisi; **Overview'da** en uzun süredir
+  bozuk olan üstte
+- **Kurallar, eşikler ve alan adları ayar** (Settings → Log analysis). Sessizce
+  özelliği daraltacak her kayıt reddediliyor: ifadesiz kural, aynı addan iki tane,
+  derlenmeyen yakalama deseni (ADR-144)
+- **Ulaşılamayan kaynak `unknown`, asla "temiz"** (ADR-142)
+- `make smoke-logfindings` — gerçek Elasticsearch'e karşı, `text` ve `keyword`
+  eşlemesinin ikisinde de
+
+### Liste ve detay ekranları
+
+- **`Image` sütunu** Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, Job ve
+  CronJob'da; detayda registry host'u, örtük `docker.io` yazılı, mirror çekimi
+  yeniden yazdıysa `pulled` satırı (ADR-133)
+- **Container kareleri artık durum taşıyor**, hazır sayısı değil: hangi container'ın
+  bozuk olduğu pod'u açmadan görünüyor. Koyu kare "işini yaptı ve kapandı" demek.
+  Karenin üzerinde exit code, sebep, başlangıç/bitiş, container ID (ADR-135)
+- **Init container'lar kendi bölümünde**; `IMAGE / PORTS / REQUESTS / LIMITS / MOUNTS`
+  ve pod düzeyinde `Volumes` — "Coming next" bölümünün yerinde, vaat ettiği üç faz da
+  geldiği için (ADR-134)
+- **Sütunlar sürüklenerek ölçekleniyor**, kind başına hatırlanıyor; çift tıklama
+  varsayılana döndürüyor (ADR-137)
+
+### Düzeltmeler
+
+- **Geçmişteki restart artık işaret üretmiyor.** Bir kez restart olup o günden beri
+  çalışan pod işaretliydi; sönmeyen bir işaret okuyucunun kaydırmayı öğrendiği bir
+  işarettir (ADR-136)
+- **Redaction `key=value` biçimindeki credential'ları kaçırıyordu.** Connection
+  string'ler ve komut satırları parolayı böyle taşır; `Password=...;` artık maskeleniyor
+- **Watch olayı satırı listede eklenen her şeyden yoksun bırakıyordu.** Yeni açılan bir
+  watch tüm nesneleri `added` olarak tekrar gönderdiği için log işaretleri çizildikten
+  bir saniye sonra siliniyordu (ADR-143)
+- `SqlException` deseni PostgreSQL'in `PSQLException`'ını yakalayıp arızayı yanlış
+  veritabanına yazıyordu (ADR-139)
+
+### Şema
+
+- `00007_cluster_logs.sql` — cluster başına log kaynağı; secret satıra bağlı mühürlü.
+  Yükseltme yine bir etiket değişimi (ADR-105)
+
+---
+
 ## 0.10.0 — 2026-08-26
 
 Tek bir Overview, bir Home ekranı, yeniden tasarlanmış cluster yönetimi — ve Docker
@@ -156,9 +221,9 @@ Faz 10'un güvenlik geçişinde bulundu:
 
 ```bash
 make test lint                                    # her şey yeşil olmalı
-make release VERSION=0.9.0 IMAGE_REGISTRY=<hedef>  # derle, doğrula, push
-make tag VERSION=0.9.0                            # temiz ağaçta etiketle
-git push origin v0.9.0
+make release VERSION=0.11.0 IMAGE_REGISTRY=<hedef> # derle, doğrula, push
+make tag VERSION=0.11.0                           # temiz ağaçta etiketle
+git push origin v0.11.0
 ```
 
 `make release` imajı push etmeden önce doğrular: doğru `kubectl`/`helm` sürümleri, uid

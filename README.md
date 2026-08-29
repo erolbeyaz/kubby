@@ -12,7 +12,7 @@ network.
 [![CI](https://github.com/erolbeyaz/kubby/actions/workflows/ci.yml/badge.svg)](https://github.com/erolbeyaz/kubby/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-> **Status: 0.10.0, packaged and published.** It runs, it is tested, and it installs from
+> **Status: 0.11.0, packaged and published.** It runs, it is tested, and it installs from
 > a published image with Helm or Compose. It has not yet been run against an
 > RKE2/Rancher-class cluster in anger — read the known limits below before you point it
 > at a production one.
@@ -77,7 +77,7 @@ build it and push it to a registry you control. Both install paths below start t
 git clone https://github.com/erolbeyaz/kubby.git
 cd kubby
 
-make release VERSION=0.9.0 IMAGE_REGISTRY=registry.example.com/platform
+make release VERSION=0.11.0 IMAGE_REGISTRY=registry.example.com/platform
 ```
 
 `make release` verifies the image before it pushes: the expected `kubectl` and `helm`
@@ -97,7 +97,7 @@ cp .env.example .env
 Fill in the three values marked `REQUIRED`:
 
 ```bash
-KUBBY_IMAGE=registry.example.com/platform/kubby:0.9.0
+KUBBY_IMAGE=registry.example.com/platform/kubby:0.11.0
 KUBBY_DB_PASSWORD=$(openssl rand -base64 24)
 KUBBY_ENCRYPTION_KEY=$(openssl rand -base64 32)
 ```
@@ -132,7 +132,7 @@ kubectl -n kubby create secret generic kubby \
 helm install kubby ./deploy/helm/kubby \
   --namespace kubby \
   --set image.registry=registry.example.com/platform \
-  --set image.tag=0.9.0 \
+  --set image.tag=0.11.0 \
   --set secrets.existingSecret=kubby \
   --set database.host=postgres.databases.svc.cluster.local \
   --set config.publicUrl=https://kubby.example.com \
