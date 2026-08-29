@@ -5,7 +5,7 @@ import { Button } from '@/components/Button'
 import { Callout } from '@/components/Callout'
 import { Field, Select, TextInput } from '@/components/Field'
 import { Icon, type IconName } from '@/components/Icon'
-import { ApiError, api, type Cluster, type ClusterGrant } from '@/lib/api'
+import { ApiError, api, type Cluster, type ClusterGrant, type LogsProbe } from '@/lib/api'
 import { formatAbsolute } from '@/lib/time'
 
 import { KubeconfigPaste } from './KubeconfigPaste'
@@ -18,7 +18,7 @@ interface ClusterDetailProps {
   onBack: () => void
 }
 
-type SectionId = 'connection' | 'identity' | 'metrics' | 'access' | 'remove'
+type SectionId = 'connection' | 'identity' | 'metrics' | 'logs' | 'access' | 'remove'
 
 /**
  * One cluster's settings.
@@ -64,6 +64,12 @@ export function ClusterDetail({ cluster, canManage, onBack }: ClusterDetailProps
       label: 'Metrics',
       icon: 'pulse',
       note: cluster.metricsUrl ? 'own endpoint' : 'deployment default',
+    },
+    {
+      id: 'logs',
+      label: 'Logs',
+      icon: 'events',
+      note: cluster.logsUrl ? 'connected' : 'not set',
     },
     {
       id: 'access',
@@ -191,6 +197,7 @@ export function ClusterDetail({ cluster, canManage, onBack }: ClusterDetailProps
 
             {canManage && section === 'identity' && <SettingsPanel cluster={cluster} />}
             {canManage && section === 'metrics' && <MetricsPanel cluster={cluster} />}
+            {canManage && section === 'logs' && <LogsPanel cluster={cluster} />}
             {canManage && section === 'access' && (
               <>
                 <ProtectionPanel cluster={cluster} />
@@ -562,6 +569,273 @@ function MetricsPanel({ cluster }: { cluster: Cluster }) {
         </div>
       </div>
     </Panel>
+  )
+}
+
+/**
+ * Where this cluster's applications already ship their logs.
+ *
+ * Kubby reads them from there and never asks the cluster for them: a shipper on every
+ * node is already reading every line as it is written, and pulling the same lines back
+ * through the API server, once per pod, would be the same work done worse — with the
+ * cost landing on the cluster being watched.
+ *
+ * Separate from the audit sink on purpose. That is where Kubby writes its own trail;
+ * this is where somebody else's applications write theirs. Sharing one setting would
+ * mean pointing Kubby at the wrong Elasticsearch to fix the other one.
+ */
+function LogsPanel({ cluster }: { cluster: Cluster }) {
+  const queryClient = useQueryClient()
+  const [url, setUrl] = useState(cluster.logsUrl ?? '')
+  const [index, setIndex] = useState(cluster.logsIndex ?? '')
+  const [scheme, setScheme] = useState(cluster.logsAuthScheme ?? '')
+  const [username, setUsername] = useState(cluster.logsUsername ?? '')
+  const [secret, setSecret] = useState('')
+  const [insecure, setInsecure] = useState(cluster.logsInsecureSkipVerify)
+
+  const body = () => ({
+    logsUrl: url.trim(),
+    logsIndex: index.trim(),
+    logsAuthScheme: scheme,
+    logsUsername: username.trim(),
+    logsInsecureSkipVerify: insecure,
+    ...(secret ? { logsSecret: secret } : {}),
+  })
+
+  const save = useMutation({
+    mutationFn: () => api.updateCluster(cluster.id, body()),
+    onSuccess: () => {
+      setSecret('')
+      void queryClient.invalidateQueries({ queryKey: ['clusters'] })
+    },
+  })
+
+  // Testing what is on screen rather than what is stored: saving a wrong address to
+  // find out it is wrong is not a test, it is a guess with extra steps.
+  const probe = useMutation({
+    mutationFn: () => api.probeClusterLogs(cluster.id, body()),
+  })
+
+  const saveError = save.error instanceof ApiError ? save.error : null
+  const probeError = probe.error instanceof ApiError ? probe.error : null
+  const dirty =
+    url !== (cluster.logsUrl ?? '') ||
+    index !== (cluster.logsIndex ?? '') ||
+    scheme !== (cluster.logsAuthScheme ?? '') ||
+    username !== (cluster.logsUsername ?? '') ||
+    insecure !== cluster.logsInsecureSkipVerify ||
+    secret !== ''
+
+  return (
+    <Panel
+      title="Log source"
+      description="An Elasticsearch holding this cluster's application logs. It answers the question Kubernetes cannot: a pod is Running and Ready, and its log says it cannot reach its database."
+    >
+      <div className="flex flex-col gap-4">
+        <Field label="Elasticsearch URL" hint="Its root, not a path.">
+          {(id) => (
+            <TextInput
+              id={id}
+              value={url}
+              placeholder="https://elasticsearch.logging.svc:9200"
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          )}
+        </Field>
+
+        <Field
+          label="Index pattern"
+          // Never guessed. Which indices hold which cluster's logs is a local naming
+          // convention, and guessing wrong would report one cluster's failures under
+          // another cluster's name.
+          hint="The index or data stream to search. Wildcards are allowed."
+        >
+          {(id) => (
+            <TextInput
+              id={id}
+              value={index}
+              placeholder="logs-hybprod-app-*"
+              onChange={(e) => setIndex(e.target.value)}
+            />
+          )}
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Authentication" hint="How the secret below is presented.">
+            {(id) => (
+              <Select id={id} value={scheme} onChange={(e) => setScheme(e.target.value)}>
+                <option value="">Basic auth</option>
+                <option value="apikey">API key</option>
+                <option value="bearer">Bearer token</option>
+              </Select>
+            )}
+          </Field>
+          <Field label="User" hint={scheme === '' ? 'Basic auth user.' : 'Not used by this scheme.'}>
+            {(id) => (
+              <TextInput
+                id={id}
+                value={username}
+                disabled={scheme !== ''}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            )}
+          </Field>
+        </div>
+
+        <Field
+          label={scheme === '' ? 'Password' : scheme === 'apikey' ? 'API key' : 'Token'}
+          // Empty means "leave what is stored", not "remove it": a form that wipes a
+          // credential because it was not retyped is a form that loses credentials.
+          hint="Stored encrypted. Leave empty to keep the one already saved."
+        >
+          {(id) => (
+            <TextInput
+              id={id}
+              type="password"
+              value={secret}
+              autoComplete="new-password"
+              onChange={(e) => setSecret(e.target.value)}
+            />
+          )}
+        </Field>
+
+        <label className="flex items-center gap-2" style={{ fontSize: 'var(--text-micro)' }}>
+          <input type="checkbox" checked={insecure} onChange={(e) => setInsecure(e.target.checked)} />
+          <span style={{ color: 'var(--text-secondary)' }}>
+            Accept a certificate this deployment does not trust
+          </span>
+        </label>
+
+        {saveError && (
+          <Callout tone="error" title="Could not save" requestId={saveError.requestId}>
+            {saveError.message}
+          </Callout>
+        )}
+        {probeError && (
+          <Callout tone="error" title="Could not run the test" requestId={probeError.requestId}>
+            {probeError.message}
+          </Callout>
+        )}
+
+        {probe.data && <ProbeResult result={probe.data} />}
+
+        <div className="flex gap-2">
+          <Button
+            onClick={() => save.mutate()}
+            variant="primary"
+            disabled={!dirty}
+            loading={save.isPending}
+          >
+            Save
+          </Button>
+          <Button
+            onClick={() => probe.mutate()}
+            disabled={!url.trim() || !index.trim()}
+            loading={probe.isPending}
+          >
+            Test connection
+          </Button>
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
+/**
+ * What the test found.
+ *
+ * A pattern that resolves to real indices holding somebody else's logs is the failure
+ * that looks like success, so the answer is not a tick: it is which store answered, how
+ * much it holds, and one whole document to read the field names off.
+ */
+function ProbeResult({ result }: { result: LogsProbe }) {
+  if (!result.reachable || !result.probe) {
+    return (
+      <Callout tone="error" title="Not connected">
+        {result.detail ?? 'The log source could not be reached.'}
+      </Callout>
+    )
+  }
+
+  const probe = result.probe
+  const empty = probe.indices === 0
+
+  return (
+    <Callout
+      tone={empty ? 'warning' : 'success'}
+      title={empty ? 'Connected, but the pattern matches nothing' : 'Connected'}
+    >
+      <div className="flex flex-col gap-2">
+        <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-0.5" style={{ fontSize: 'var(--text-micro)' }}>
+          <dt style={{ color: 'var(--text-muted)' }}>Store</dt>
+          <dd className="font-mono">
+            {probe.cluster || 'unnamed'}
+            {probe.version ? ` · ${probe.version}` : ''}
+          </dd>
+          <dt style={{ color: 'var(--text-muted)' }}>Indices matched</dt>
+          <dd className="font-mono">{probe.indices}</dd>
+          <dt style={{ color: 'var(--text-muted)' }}>Documents</dt>
+          <dd className="font-mono">
+            {probe.documents.toLocaleString()} in the last {probe.windowMinutes} minutes
+          </dd>
+          {probe.sampleAt && (
+            <>
+              <dt style={{ color: 'var(--text-muted)' }}>Newest entry</dt>
+              <dd className="font-mono">{formatAbsolute(probe.sampleAt)}</dd>
+            </>
+          )}
+          {probe.message?.type && (
+            <>
+              <dt style={{ color: 'var(--text-muted)' }}>Message field</dt>
+              <dd className="font-mono">
+                {probe.messageField} · {probe.message.type}
+              </dd>
+            </>
+          )}
+        </dl>
+
+        {/* The failure that looks like success. Neither of these errors; both mean the
+            rules quietly find less than they should, or nothing at all. */}
+        {probe.message?.type && !probe.message.analyzed && (
+          <p style={{ fontSize: 'var(--text-micro)', color: 'var(--status-warn)' }}>
+            This field is indexed as <span className="font-mono">{probe.message.type}</span>, not
+            analyzed text, so a phrase cannot be found inside a longer line. Kubby falls back to
+            wildcard matching, which works but is slower on a large index.
+          </p>
+        )}
+        {probe.message?.ignoreAbove !== undefined && probe.message.ignoreAbove > 0 && (
+          <p style={{ fontSize: 'var(--text-micro)', color: 'var(--status-warn)' }}>
+            Lines longer than {probe.message.ignoreAbove.toLocaleString()} characters are stored but
+            never indexed, so they cannot be searched — which is most stack traces.
+          </p>
+        )}
+
+        {probe.sample ? (
+          <div>
+            <p className="mb-1" style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
+              One document, so you can see which fields carry the message and the pod:
+            </p>
+            <pre
+              className="max-h-64 overflow-auto border p-2 font-mono"
+              style={{
+                borderRadius: 'var(--radius-sharp)',
+                borderColor: 'var(--border-subtle)',
+                backgroundColor: 'var(--bg-base)',
+                fontSize: 'var(--text-micro)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {JSON.stringify(probe.sample, null, 2)}
+            </pre>
+          </div>
+        ) : (
+          <p style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
+            Nothing was written in that window. The pattern may be right and the cluster quiet,
+            or the pattern may point at the wrong stream.
+          </p>
+        )}
+      </div>
+    </Callout>
   )
 }
 

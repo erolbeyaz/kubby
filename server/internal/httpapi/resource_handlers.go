@@ -40,6 +40,9 @@ type resourceHandlers struct {
 	// forwards holds the open tunnels. They live in memory on purpose: a forward is tied
 	// to this process, and a restart should end it rather than resurrect it.
 	forwards *forwardRegistry
+	// logs holds what each cluster's own logs are saying, swept in the background so a
+	// list does not wait on a second system to draw.
+	logs *cluster.LogSweeper
 }
 
 // resolveCluster loads the cluster in the URL and enforces read access. Sharing this
@@ -201,6 +204,12 @@ func (h *resourceHandlers) list(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeResourceError(w, r, err)
 		return
+	}
+
+	// What the objects themselves say is one system; what their logs say is another,
+	// and it is joined on the way out rather than inside the projection.
+	if h.logs != nil {
+		h.logs.Attach(c.ID.String(), resourceType.Kind, result.Rows)
 	}
 	writeJSON(w, http.StatusOK, result)
 }

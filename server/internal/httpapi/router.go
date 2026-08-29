@@ -42,7 +42,10 @@ type Deps struct {
 	// Metrics is Kubby's own instrumentation. Optional: with none, /metrics answers 404
 	// and nothing is recorded.
 	Metrics *metrics.Registry
-	WebFS   fs.FS
+	// Logs holds what the clusters' own logs are saying. Optional: with none the
+	// endpoint reports that nothing has been swept, which is the truth.
+	Logs  *cluster.LogSweeper
+	WebFS fs.FS
 }
 
 // Server owns the handler and any background resources it needs to release.
@@ -109,6 +112,7 @@ func New(d Deps) *Server {
 		clusters: d.Store.Clusters(),
 		users:    d.Store.Users(),
 		audit:    d.Audit,
+		logs:     d.Logs,
 	}
 	settingsService := settings.New(d.Store.Settings(), d.Keyring)
 
@@ -200,6 +204,7 @@ func New(d Deps) *Server {
 		readOnly:       d.Config.HTTP.ReadOnly,
 		settings:       settingsService,
 		forwards:       newForwardRegistry(),
+		logs:           d.Logs,
 	}
 	settingsAPI := &settingsHandlers{svc: settingsService, audit: d.Audit, shipper: shipper}
 	userAPI := &userHandlers{
@@ -293,6 +298,7 @@ func New(d Deps) *Server {
 				cl.Get("/clusters/{id}/helm-releases", resourceAPI.listHelmReleases)
 				cl.Get("/clusters/{id}/helm-releases/{namespace}/{name}", resourceAPI.helmRelease)
 				cl.Get("/clusters/{id}/metrics", resourceAPI.clusterMetrics)
+				cl.Get("/clusters/{id}/log-findings", clusterAPI.logFindings)
 				cl.Get("/clusters/{id}/secret/{namespace}/{name}/keys", resourceAPI.secretKeys)
 				// Disclosure is its own route so it is its own audit record; listing a
 				// secret's keys is not the same act as reading one of its values.
@@ -346,6 +352,10 @@ func New(d Deps) *Server {
 				cl.Post("/clusters/validate", clusterAPI.validate)
 				cl.Post("/clusters", clusterAPI.create)
 				cl.Patch("/clusters/{id}", clusterAPI.update)
+				// Testing a log source reads from it with a credential the operator
+				// supplies, so it sits with the settings it belongs to rather than with
+				// the cluster reads.
+				cl.Post("/clusters/{id}/logs/probe", clusterAPI.probeLogs)
 				cl.Delete("/clusters/{id}", clusterAPI.remove)
 				cl.Put("/clusters/{id}/credentials", clusterAPI.replaceCredential)
 				cl.Get("/clusters/{id}/grants", clusterAPI.listGrants)

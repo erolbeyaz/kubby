@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/cluster"
+	"github.com/erolbeyaz/kubby/internal/logsearch"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/store"
 )
@@ -22,6 +24,7 @@ type clusterHandlers struct {
 	clusters *store.ClusterRepo
 	users    *store.UserRepo
 	audit    *audit.Emitter
+	logs     *cluster.LogSweeper
 }
 
 // ---------------------------------------------------------------- reading
@@ -51,6 +54,13 @@ type clusterResponse struct {
 	MetricsURL                string `json:"metricsUrl,omitempty"`
 	MetricsUsername           string `json:"metricsUsername,omitempty"`
 	MetricsInsecureSkipVerify bool   `json:"metricsInsecureSkipVerify"`
+	// The log source, on the same terms: the address and who it connects as are
+	// configuration and are shown; the secret is not, only whether one is held.
+	LogsURL                string `json:"logsUrl,omitempty"`
+	LogsIndex              string `json:"logsIndex,omitempty"`
+	LogsAuthScheme         string `json:"logsAuthScheme,omitempty"`
+	LogsUsername           string `json:"logsUsername,omitempty"`
+	LogsInsecureSkipVerify bool   `json:"logsInsecureSkipVerify"`
 }
 
 func clusterResponseFrom(c *store.Cluster, accessLevel string) clusterResponse {
@@ -77,6 +87,12 @@ func clusterResponseFrom(c *store.Cluster, accessLevel string) clusterResponse {
 		MetricsURL:                c.MetricsURL,
 		MetricsUsername:           c.MetricsUsername,
 		MetricsInsecureSkipVerify: c.MetricsInsecureSkipVerify,
+
+		LogsURL:                c.LogsURL,
+		LogsIndex:              c.LogsIndex,
+		LogsAuthScheme:         c.LogsAuthScheme,
+		LogsUsername:           c.LogsUsername,
+		LogsInsecureSkipVerify: c.LogsInsecureSkipVerify,
 	}
 	if c.LastValidatedAt != nil {
 		out.LastValidatedAt = c.LastValidatedAt.UTC().Format(time.RFC3339)
@@ -310,6 +326,17 @@ type updateClusterRequest struct {
 	// a form saved without retyping a credential must not lose it.
 	MetricsPassword      string `json:"metricsPassword,omitempty"`
 	ClearMetricsPassword bool   `json:"clearMetricsPassword,omitempty"`
+	// Where this cluster's applications already ship their logs. Kubby reads them from
+	// there and never asks the cluster for them.
+	LogsURL                *string `json:"logsUrl,omitempty"`
+	LogsIndex              *string `json:"logsIndex,omitempty"`
+	LogsAuthScheme         *string `json:"logsAuthScheme,omitempty"`
+	LogsUsername           *string `json:"logsUsername,omitempty"`
+	LogsInsecureSkipVerify *bool   `json:"logsInsecureSkipVerify,omitempty"`
+	// LogsSecret is write-only, on the same terms as the metrics password: empty means
+	// "leave what is stored", not "remove it".
+	LogsSecret      string `json:"logsSecret,omitempty"`
+	ClearLogsSecret bool   `json:"clearLogsSecret,omitempty"`
 }
 
 func (h *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +362,11 @@ func (h *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
 		ImpersonationEnabled: req.ImpersonationEnabled, QPSLimit: req.QPSLimit,
 		MetricsURL: req.MetricsURL, MetricsUsername: req.MetricsUsername,
 		MetricsInsecureSkipVerify: req.MetricsInsecureSkipVerify,
+		LogsURL:                   req.LogsURL,
+		LogsIndex:                 req.LogsIndex,
+		LogsAuthScheme:            req.LogsAuthScheme,
+		LogsUsername:              req.LogsUsername,
+		LogsInsecureSkipVerify:    req.LogsInsecureSkipVerify,
 	})
 	if errors.Is(err, store.ErrClusterNameInUse) {
 		writeError(w, r, http.StatusConflict, "a cluster with that name already exists")
@@ -363,6 +395,29 @@ func (h *clusterHandlers) update(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := h.clusters.SetMetricsPassword(r.Context(), c.ID, sealed); err != nil {
 			writeError(w, r, http.StatusInternalServerError, "could not store the metrics password")
+			return
+		}
+	}
+
+	// An operator who has just pointed a cluster at a different store is asking for it
+	// to take effect now; a minute of answers from the old one would read as the change
+	// not having worked.
+	if h.logs != nil && (req.LogsURL != nil || req.LogsIndex != nil || req.LogsAuthScheme != nil ||
+		req.LogsUsername != nil || req.LogsSecret != "" || req.ClearLogsSecret) {
+		h.logs.Forget(c.ID.String())
+	}
+
+	if req.LogsSecret != "" || req.ClearLogsSecret {
+		var sealed []byte
+		if !req.ClearLogsSecret {
+			sealed, err = h.svc.SealLogsSecret(c.ID.String(), req.LogsSecret)
+			if err != nil {
+				writeError(w, r, http.StatusInternalServerError, "could not store the log source secret")
+				return
+			}
+		}
+		if err := h.clusters.SetLogsSecret(r.Context(), c.ID, sealed); err != nil {
+			writeError(w, r, http.StatusInternalServerError, "could not store the log source secret")
 			return
 		}
 	}
@@ -576,4 +631,107 @@ func writeKubeconfigError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		writeError(w, r, http.StatusInternalServerError, "could not process the kubeconfig")
 	}
+}
+
+type probeLogsRequest struct {
+	// The values as typed, which may not be saved yet: a test that only ever checked
+	// what is stored would mean saving a wrong address to find out it is wrong.
+	URL                string `json:"logsUrl,omitempty"`
+	Index              string `json:"logsIndex,omitempty"`
+	AuthScheme         string `json:"logsAuthScheme,omitempty"`
+	Username           string `json:"logsUsername,omitempty"`
+	Secret             string `json:"logsSecret,omitempty"`
+	InsecureSkipVerify bool   `json:"logsInsecureSkipVerify,omitempty"`
+}
+
+type probeLogsResponse struct {
+	Reachable bool `json:"reachable"`
+	// Detail says what went wrong in the operator's terms — a refused credential and a
+	// pattern matching nothing are different problems with the same red tick.
+	Detail string           `json:"detail,omitempty"`
+	Probe  *logsearch.Probe `json:"probe,omitempty"`
+}
+
+// probeLogs tests a cluster's log source.
+//
+// A failure here is an answer, not a server error: "the credential was refused" is the
+// result the operator asked for. Only the request being unusable is a 4xx.
+func (h *clusterHandlers) probeLogs(w http.ResponseWriter, r *http.Request) {
+	c, _, ok := h.resolve(w, r, store.AccessWrite)
+	if !ok {
+		return
+	}
+
+	var req probeLogsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	probe, err := h.svc.ProbeLogs(ctx, c, logsearch.Config{
+		URL: req.URL, Index: req.Index, Username: req.Username,
+		Secret: req.Secret, Scheme: req.AuthScheme,
+		InsecureSkipVerify: req.InsecureSkipVerify,
+	}, 15*time.Minute)
+	if err != nil {
+		writeJSON(w, http.StatusOK, probeLogsResponse{Reachable: false, Detail: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, probeLogsResponse{Reachable: true, Probe: probe})
+}
+
+type logFindingsResponse struct {
+	State  string `json:"state"`
+	Detail string `json:"detail,omitempty"`
+	// SweptAt is when the answer was taken, so a reader can tell a quiet cluster from a
+	// sweeper that stopped running.
+	SweptAt  string              `json:"sweptAt,omitempty"`
+	Findings []logsearch.Finding `json:"findings"`
+}
+
+// logFindings reports what this cluster's own logs are saying.
+//
+// Narrowed to the namespaces this reader may see. Not hidden in the client — a finding
+// carries a line out of an application's log, and someone who cannot list a namespace's
+// pods may not read its logs either.
+func (h *clusterHandlers) logFindings(w http.ResponseWriter, r *http.Request) {
+	c, _, ok := h.resolve(w, r, store.AccessRead)
+	if !ok {
+		return
+	}
+	if h.logs == nil {
+		writeJSON(w, http.StatusOK, logFindingsResponse{
+			State:    cluster.LogsStateUnknown,
+			Detail:   "log sweeping is not running",
+			Findings: []logsearch.Finding{},
+		})
+		return
+	}
+
+	found := h.logs.Findings(c.ID.String())
+	writeJSON(w, http.StatusOK, logFindingsResponse{
+		State:    found.State,
+		Detail:   found.Detail,
+		SweptAt:  rfc3339(found.SweptAt),
+		Findings: visibleFindings(found.Findings),
+	})
+}
+
+// visibleFindings is where a namespace filter will go once findings are joined to rows
+// and the reader's grants are in hand. Today a grant is per cluster, and this reader
+// already holds one for this cluster.
+func visibleFindings(findings []logsearch.Finding) []logsearch.Finding {
+	if findings == nil {
+		return []logsearch.Finding{}
+	}
+	return findings
+}
+
+func rfc3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }

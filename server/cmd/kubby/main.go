@@ -138,6 +138,11 @@ func run() error {
 	shellSweeper := cluster.NewNodeShellSweeper(clusterService, db.Clusters(), settingsService, logger)
 	go shellSweeper.Run(ctx)
 
+	// What the pods are saying about themselves. On a schedule so the answer is already
+	// on the row when a list is drawn, rather than a query in front of every reader.
+	logSweeper := cluster.NewLogSweeper(clusterService, db, logger, time.Minute, 15*time.Minute)
+	go logSweeper.Run(ctx)
+
 	server := httpapi.New(httpapi.Deps{
 		Config:  cfg,
 		Logger:  logger,
@@ -149,6 +154,7 @@ func run() error {
 		Metrics: registry,
 		Keyring: keyring,
 		WebFS:   webFS,
+		Logs:    logSweeper,
 	})
 	defer server.Close()
 

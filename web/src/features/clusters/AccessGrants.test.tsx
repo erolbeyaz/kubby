@@ -25,6 +25,7 @@ const CLUSTER: Cluster = {
   impersonationEnabled: false,
   qpsLimit: 50,
   metricsInsecureSkipVerify: false,
+  logsInsecureSkipVerify: false,
 }
 
 const MEMBER = {

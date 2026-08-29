@@ -8,6 +8,7 @@ import type { ResourceRow } from '@/lib/api'
 import { ResourceTable } from './ResourceTable'
 
 const COLUMNS = [
+  { key: 'containers', label: 'Containers', mono: true },
   { key: 'ready', label: 'Ready', mono: true },
   { key: 'status', label: 'Status', status: true },
   { key: 'restarts', label: 'Restarts', mono: true },
@@ -311,6 +312,17 @@ describe('ResourceTable', () => {
     expect(await screen.findByRole('img', { name: /CrashLoopBackOff · api/ })).toBeInTheDocument()
   })
 
+  // A pod that restarted last week and is running now is working. A mark that never
+  // clears is one the reader learns to scroll past, and then it is not a mark at all.
+  it('leaves a running pod unmarked however many times it has restarted', async () => {
+    mockList([pod('recovered', { fields: { ready: '1/1', status: 'Running', restarts: '9' } })])
+    renderTable()
+
+    expect(await screen.findByText('recovered')).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /restart/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /needs attention/i })).not.toBeInTheDocument()
+  })
+
   // A kind the server has no dedicated reading for still says whether it is settled.
   it('falls back to the status when there is no reason', async () => {
     mockList([pod('unknown-state', { fields: { status: 'Terminating', restarts: '0' }, severity: 'warning' })])
@@ -335,5 +347,174 @@ describe('ResourceTable', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Actions for payments-api-1' }))
 
     expect(onContextMenu).toHaveBeenCalled()
+  })
+})
+
+describe('column widths', () => {
+  afterEach(() => localStorage.clear())
+
+  it('offers a grip on every column, including the ones the kind brought with it', async () => {
+    mockList([pod('one')])
+    renderTable()
+
+    expect(await screen.findByRole('separator', { name: 'Resize Name' })).toBeInTheDocument()
+    for (const column of COLUMNS) {
+      expect(screen.getByRole('separator', { name: `Resize ${column.label}` })).toBeInTheDocument()
+    }
+  })
+
+  // The width belongs to the kind and outlives the visit; re-dragging it every time is
+  // exactly the small friction that makes a tool tiring.
+  it('renders a column at the width it was left at', async () => {
+    localStorage.setItem('kubby.columns.Pod', JSON.stringify({ status: 320 }))
+    mockList([pod('one')])
+    renderTable()
+
+    const header = await screen.findByRole('row', { name: 'Columns' })
+    expect(header.style.gridTemplateColumns).toContain('320px')
+  })
+
+  it('ignores stored widths that are not widths', async () => {
+    localStorage.setItem('kubby.columns.Pod', 'not json')
+    mockList([pod('one')])
+    renderTable()
+
+    expect(await screen.findByText('one')).toBeInTheDocument()
+  })
+})
+
+describe('container pips', () => {
+  const running = (name: string, ready = true) => ({
+    name,
+    state: 'running' as const,
+    ready,
+    startedAt: '2026-08-27T18:20:55Z',
+    containerId: 'containerd://d80a39fede42f882c9809cdfae6f2cdb349a4148e',
+  })
+
+  const completed = (name: string) => ({
+    name,
+    state: 'terminated' as const,
+    ready: true,
+    init: true,
+    exitCode: 0,
+    reason: 'Completed',
+    startedAt: '2026-08-27T18:20:34Z',
+    finishedAt: '2026-08-27T18:20:34Z',
+  })
+
+  // A ready count says how many containers are wrong and never which one.
+  it('draws one square per container, init containers included', async () => {
+    mockList([
+      pod('sidecarred', {
+        fields: { ready: '2/2', status: 'Running', restarts: '0', containers: '2/2' },
+        containerStates: [running('fi-accounting-api'), running('istio-proxy'), completed('istio-init')],
+      }),
+    ])
+    renderTable()
+
+    expect(await screen.findByRole('img', { name: /fi-accounting-api — running, ready/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /istio-proxy — running, ready/ })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /istio-init — terminated, ready: Completed/ })).toBeInTheDocument()
+  })
+
+  it('summarises the container under the pointer', async () => {
+    mockList([
+      pod('sidecarred', {
+        fields: { ready: '1/1', status: 'Running', restarts: '0', containers: '1/1' },
+        containerStates: [completed('istio-init')],
+      }),
+    ])
+    renderTable()
+
+    fireEvent.mouseEnter(await screen.findByRole('img', { name: /istio-init/ }))
+
+    const card = await screen.findByRole('tooltip')
+    expect(card).toHaveTextContent('istio-init')
+    expect(card).toHaveTextContent('terminated, ready')
+    // Zero is a meaningful exit code and has to be shown, not treated as absent.
+    expect(card).toHaveTextContent('Exit Code')
+    expect(card).toHaveTextContent('0')
+    expect(card).toHaveTextContent('Completed')
+
+    fireEvent.mouseLeave(screen.getByRole('img', { name: /istio-init/ }))
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
+  // A row from a cache written before the states existed still has to draw something.
+  it('falls back to the ready count when a row carries no states', async () => {
+    mockList([pod('old', { fields: { ready: '1/2', status: 'Running', restarts: '0', containers: '1/2' } })])
+    renderTable()
+
+    expect(await screen.findByTitle('1 of 2 containers ready')).toBeInTheDocument()
+  })
+})
+
+describe('log findings', () => {
+  const finding = (over: Record<string, unknown> = {}) => ({
+    namespace: 'nx-apps',
+    pod: 'nx-fxrateengineapi-ff6b97dfd-8mlwz',
+    rule: 'SQL Server',
+    class: 'auth' as const,
+    count: 456672,
+    summary: 'database NetTrexCommon · user netixuser',
+    sample: 'Cannot open database "NetTrexCommon" requested by the login. The login failed.',
+    firstSeen: '2026-08-29T22:00:00Z',
+    lastSeen: '2026-08-29T22:14:00Z',
+    severity: 'error' as const,
+    ...over,
+  })
+
+  it('marks a row whose logs keep reporting a problem', async () => {
+    mockList([pod('running-but-broken', { logFinding: finding() })])
+    renderTable()
+
+    expect(await screen.findByRole('img', { name: /Logs report SQL Server/ })).toBeInTheDocument()
+  })
+
+  // The pod is Running and Ready and Kubernetes has nothing to say about it. That is
+  // the whole case for reading the logs at all.
+  it('marks it even though the object itself looks healthy', async () => {
+    mockList([pod('running-but-broken', { logFinding: finding() })])
+    renderTable()
+
+    await screen.findByRole('img', { name: /Logs report/ })
+    // No Kubernetes warning triangle: nothing about the object is wrong.
+    expect(screen.queryByRole('img', { name: /needs attention|Pod is/ })).not.toBeInTheDocument()
+  })
+
+  it('leaves a row with nothing in its logs unmarked', async () => {
+    mockList([pod('quiet')])
+    renderTable()
+
+    expect(await screen.findByText('quiet')).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /Logs report/ })).not.toBeInTheDocument()
+  })
+
+  it('says what the logs said and for how long', async () => {
+    mockList([pod('running-but-broken', { logFinding: finding() })])
+    renderTable()
+
+    fireEvent.mouseEnter(await screen.findByRole('img', { name: /Logs report/ }))
+
+    const card = await screen.findByRole('tooltip')
+    expect(card).toHaveTextContent('SQL Server')
+    expect(card).toHaveTextContent('456,672 lines')
+    expect(card).toHaveTextContent('database NetTrexCommon')
+    expect(card).toHaveTextContent('Cannot open database')
+    expect(card).toHaveTextContent(/first seen/)
+  })
+
+  // Nine replicas saying the same thing is the same news nine times.
+  it('says how many pods a rolled-up finding covers', async () => {
+    mockList([
+      pod('fi-n8n-worker', {
+        logFinding: finding({ rule: 'Connection refused', class: 'unreachable', pods: 9, count: 63 }),
+      }),
+    ])
+    renderTable()
+
+    fireEvent.mouseEnter(await screen.findByRole('img', { name: /across 9 pods/ }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('9 pods')
   })
 })

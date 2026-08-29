@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/erolbeyaz/kubby/internal/k8s"
+	"github.com/erolbeyaz/kubby/internal/logsearch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -26,6 +27,39 @@ type Row struct {
 	Fields    map[string]string `json:"fields"`
 	// Severity lets a list highlight what is wrong without the client re-deriving it.
 	Severity string `json:"severity,omitempty"`
+	// ContainerStates is what each container of a pod is doing. A count of ready ones
+	// says how many are wrong but never which, and "which" is the first thing asked.
+	ContainerStates []ContainerState `json:"containerStates,omitempty"`
+	// LogFinding is what this object's own logs keep saying, when they say anything.
+	//
+	// Deliberately its own field rather than folded into Severity: what Kubernetes
+	// reports is a fact and this is a reading of somebody's log output. Rendering them
+	// as the same mark would spend the credibility of the reliable one.
+	LogFinding *logsearch.Finding `json:"logFinding,omitempty"`
+}
+
+// ContainerState is one container of a pod, projected down to what a list can say
+// about it without opening the pod.
+//
+// Init containers are included and marked: a pod whose init container is failing looks
+// idle from the outside, and a row that counts only application containers reports it
+// as nothing being wrong.
+type ContainerState struct {
+	Name string `json:"name"`
+	// State is the API's own word: running, waiting or terminated.
+	State    string `json:"state"`
+	Ready    bool   `json:"ready"`
+	Init     bool   `json:"init,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Message  string `json:"message,omitempty"`
+	ExitCode *int64 `json:"exitCode,omitempty"`
+	// Timestamps stay UTC and RFC 3339; the browser converts (ADR-026).
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+	Restarts   int64  `json:"restarts,omitempty"`
+	// ContainerID is what a node-side investigation starts from, and it is not
+	// derivable from anything else on the row.
+	ContainerID string `json:"containerId,omitempty"`
 }
 
 const (
@@ -63,6 +97,8 @@ type projector struct {
 	// hideName drops the name column for kinds whose name says nothing.
 	hideName bool
 	project  func(obj *unstructured.Unstructured) (map[string]string, string)
+	// states is set only for kinds that run containers.
+	states func(obj *unstructured.Unstructured) []ContainerState
 }
 
 // ColumnsFor reports the columns a kind renders.
@@ -89,7 +125,7 @@ func Project(kind string, obj *unstructured.Unstructured, now time.Time) Row {
 	fields, severity := p.project(obj)
 
 	created := obj.GetCreationTimestamp().Time
-	return Row{
+	row := Row{
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 		Age:       humanAge(now.Sub(created)),
@@ -97,6 +133,10 @@ func Project(kind string, obj *unstructured.Unstructured, now time.Time) Row {
 		Fields:    fields,
 		Severity:  severity,
 	}
+	if p.states != nil {
+		row.ContainerStates = p.states(obj)
+	}
+	return row
 }
 
 var genericProjector = projector{
@@ -110,6 +150,7 @@ var projectors = map[string]projector{
 	"Pod": {
 		columns: []Column{
 			{Key: "containers", Label: "Containers", Mono: true},
+			{Key: "image", Label: "Image", Mono: true},
 			{Key: "restarts", Label: "Restarts", Mono: true},
 			{Key: "controlledBy", Label: "Controlled By", Link: LinkOwner},
 			{Key: "node", Label: "Node", Mono: true, Link: LinkNode},
@@ -117,12 +158,14 @@ var projectors = map[string]projector{
 			{Key: "age", Label: "Age", Mono: true},
 		},
 		project: projectPod,
+		states:  podContainerStates,
 	},
 	"Deployment": {
 		columns: []Column{
 			{Key: "ready", Label: "Ready", Mono: true},
 			{Key: "uptodate", Label: "Up-to-date", Mono: true},
 			{Key: "available", Label: "Available", Mono: true},
+			{Key: "image", Label: "Image", Mono: true},
 			{Key: "age", Label: "Age", Mono: true},
 		},
 		project: func(obj *unstructured.Unstructured) (map[string]string, string) {
@@ -134,12 +177,14 @@ var projectors = map[string]projector{
 				"uptodate":  fmt.Sprint(nestedInt(obj, "status", "updatedReplicas")),
 				"available": fmt.Sprint(nestedInt(obj, "status", "availableReplicas")),
 			}
+			withImages(fields, obj, "spec", "template", "spec")
 			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
 	"StatefulSet": {
 		columns: []Column{
 			{Key: "ready", Label: "Ready", Mono: true},
+			{Key: "image", Label: "Image", Mono: true},
 			{Key: "age", Label: "Age", Mono: true},
 		},
 		project: func(obj *unstructured.Unstructured) (map[string]string, string) {
@@ -147,6 +192,7 @@ var projectors = map[string]projector{
 			ready := nestedInt(obj, "status", "readyReplicas")
 
 			fields := map[string]string{"ready": fmt.Sprintf("%d/%d", ready, desired)}
+			withImages(fields, obj, "spec", "template", "spec")
 			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
@@ -155,6 +201,7 @@ var projectors = map[string]projector{
 			{Key: "desired", Label: "Desired", Mono: true},
 			{Key: "ready", Label: "Ready", Mono: true},
 			{Key: "available", Label: "Available", Mono: true},
+			{Key: "image", Label: "Image", Mono: true},
 			{Key: "age", Label: "Age", Mono: true},
 		},
 		project: func(obj *unstructured.Unstructured) (map[string]string, string) {
@@ -166,6 +213,7 @@ var projectors = map[string]projector{
 				"ready":     fmt.Sprint(ready),
 				"available": fmt.Sprint(nestedInt(obj, "status", "numberAvailable")),
 			}
+			withImages(fields, obj, "spec", "template", "spec")
 			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
@@ -174,21 +222,24 @@ var projectors = map[string]projector{
 			{Key: "desired", Label: "Desired", Mono: true},
 			{Key: "ready", Label: "Ready", Mono: true},
 			{Key: "controlledBy", Label: "Controlled By", Link: LinkOwner},
+			{Key: "image", Label: "Image", Mono: true},
 			{Key: "age", Label: "Age", Mono: true},
 		},
 		project: func(obj *unstructured.Unstructured) (map[string]string, string) {
 			owner, ownerKind := ownerOf(obj)
-			return map[string]string{
+			fields := map[string]string{
 				"desired":          fmt.Sprint(nestedInt(obj, "spec", "replicas")),
 				"ready":            fmt.Sprint(nestedInt(obj, "status", "readyReplicas")),
 				"controlledBy":     owner,
 				"controlledByKind": ownerKind,
-			}, ""
+			}
+			return withImages(fields, obj, "spec", "template", "spec"), ""
 		},
 	},
 	"Job": {
 		columns: []Column{
 			{Key: "completions", Label: "Completions", Mono: true},
+			{Key: "image", Label: "Image", Mono: true},
 			{Key: "age", Label: "Age", Mono: true},
 		},
 		project: func(obj *unstructured.Unstructured) (map[string]string, string) {
@@ -199,7 +250,8 @@ var projectors = map[string]projector{
 			if nestedInt(obj, "status", "failed") > 0 {
 				severity = SeverityError
 			}
-			return map[string]string{"completions": fmt.Sprintf("%d/%d", succeeded, wanted)}, severity
+			fields := map[string]string{"completions": fmt.Sprintf("%d/%d", succeeded, wanted)}
+			return withImages(fields, obj, "spec", "template", "spec"), severity
 		},
 	},
 	"CronJob": {
@@ -207,17 +259,19 @@ var projectors = map[string]projector{
 			{Key: "schedule", Label: "Schedule", Mono: true},
 			{Key: "suspend", Label: "Suspend"},
 			{Key: "active", Label: "Active", Mono: true},
+			{Key: "image", Label: "Image", Mono: true},
 			{Key: "age", Label: "Age", Mono: true},
 		},
 		project: func(obj *unstructured.Unstructured) (map[string]string, string) {
 			suspended, _, _ := unstructured.NestedBool(obj.Object, "spec", "suspend")
 			active, _, _ := unstructured.NestedSlice(obj.Object, "status", "active")
 
-			return map[string]string{
+			fields := map[string]string{
 				"schedule": nestedString(obj, "spec", "schedule"),
 				"suspend":  fmt.Sprint(suspended),
 				"active":   fmt.Sprint(len(active)),
-			}, ""
+			}
+			return withImages(fields, obj, "spec", "jobTemplate", "spec", "template", "spec"), ""
 		},
 	},
 	"Service": {
@@ -389,11 +443,12 @@ func projectPod(obj *unstructured.Unstructured) (map[string]string, string) {
 	// never disagree about the same pod. "Pending" is the question; this is the answer.
 	trouble := k8s.PodTrouble(obj)
 
+	// A pod that restarted and is now running is not in trouble: the restart count is
+	// on the row and the reason is one click away, but a mark that never clears turns
+	// into background noise and stops meaning "look here".
 	severity := ""
 	if trouble != nil {
 		severity = trouble.Severity
-	} else if restarts > 0 {
-		severity = SeverityWarning
 	}
 
 	owner, ownerKind := ownerOf(obj)
@@ -407,6 +462,7 @@ func projectPod(obj *unstructured.Unstructured) (map[string]string, string) {
 		"controlledBy":     owner,
 		"controlledByKind": ownerKind,
 	}
+	withImages(fields, obj, "spec")
 	if trouble != nil {
 		fields["reason"] = trouble.Reason
 		fields["trouble"] = trouble.Detail
@@ -642,4 +698,172 @@ func eventTime(obj *unstructured.Unstructured) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// projectImages reports what a list says about the images a pod spec pulls: one image
+// for the column, and every container beside its own image for the tooltip behind it.
+//
+// The column names an image and counts the rest rather than presenting the first
+// container as the interesting one — with a sidecar injected it frequently is not
+// (ADR-030) — so the reader who needs the others is one hover away from all of them.
+func projectImages(podSpec map[string]any) (column, detail string) {
+	type container struct{ name, image string }
+
+	containersIn := func(key string) []container {
+		raw, _, err := unstructured.NestedFieldNoCopy(podSpec, key)
+		if err != nil {
+			return nil
+		}
+		list, ok := raw.([]any)
+		if !ok {
+			return nil
+		}
+
+		found := make([]container, 0, len(list))
+		for _, item := range list {
+			fields, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			image, _, _ := unstructured.NestedString(fields, "image")
+			if image == "" {
+				continue
+			}
+			name, _, _ := unstructured.NestedString(fields, "name")
+			found = append(found, container{name: name, image: image})
+		}
+		return found
+	}
+
+	app, initial := containersIn("containers"), containersIn("initContainers")
+	if len(app) == 0 && len(initial) == 0 {
+		return "", ""
+	}
+
+	lines := make([]string, 0, len(app)+len(initial))
+	for _, c := range app {
+		lines = append(lines, fmt.Sprintf("%s  %s", c.name, c.image))
+	}
+	for _, c := range initial {
+		lines = append(lines, fmt.Sprintf("%s  %s (init)", c.name, c.image))
+	}
+
+	first := app
+	if len(first) == 0 {
+		first = initial
+	}
+	column = first[0].image
+	if rest := len(app) + len(initial) - 1; rest > 0 {
+		column = fmt.Sprintf("%s +%d", column, rest)
+	}
+	return column, strings.Join(lines, "\n")
+}
+
+// podSpecAt reads a workload's pod template without copying it. Every row in a list of
+// several thousand pods walks this path, and NestedMap would deep-copy a whole template
+// per row to read two strings out of it (ADR-019).
+func podSpecAt(obj *unstructured.Unstructured, path ...string) map[string]any {
+	raw, found, err := unstructured.NestedFieldNoCopy(obj.Object, path...)
+	if !found || err != nil {
+		return nil
+	}
+	spec, _ := raw.(map[string]any)
+	return spec
+}
+
+// withImages folds the image column and its tooltip into a row's fields.
+func withImages(fields map[string]string, obj *unstructured.Unstructured, path ...string) map[string]string {
+	column, detail := projectImages(podSpecAt(obj, path...))
+	if column != "" {
+		fields["image"] = column
+		fields["images"] = detail
+	}
+	return fields
+}
+
+// podContainerStates reports what each of a pod's containers is doing.
+//
+// Application containers come first and init containers after, which is the order the
+// row draws them in: what the pod is running now is what is being looked for, and what
+// already ran and exited sits behind it.
+func podContainerStates(obj *unstructured.Unstructured) []ContainerState {
+	read := func(key string, init bool) []ContainerState {
+		raw, _, err := unstructured.NestedFieldNoCopy(obj.Object, "status", key)
+		if err != nil {
+			return nil
+		}
+		list, ok := raw.([]any)
+		if !ok {
+			return nil
+		}
+
+		states := make([]ContainerState, 0, len(list))
+		for _, item := range list {
+			status, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			states = append(states, containerStateOf(status, init))
+		}
+		return states
+	}
+
+	app, initial := read("containerStatuses", false), read("initContainerStatuses", true)
+	if len(app) == 0 && len(initial) == 0 {
+		return nil
+	}
+	return append(app, initial...)
+}
+
+func containerStateOf(status map[string]any, init bool) ContainerState {
+	state := ContainerState{
+		Name:        nestedStringIn(status, "name"),
+		Ready:       nestedBoolIn(status, "ready"),
+		Init:        init,
+		Restarts:    nestedIntIn(status, "restartCount"),
+		ContainerID: nestedStringIn(status, "containerID"),
+	}
+
+	// The API expresses the state as a union of three, only one of which is present.
+	switch {
+	case has(status, "state", "running"):
+		state.State = "running"
+		state.StartedAt = nestedStringIn(status, "state", "running", "startedAt")
+	case has(status, "state", "terminated"):
+		state.State = "terminated"
+		state.Reason = nestedStringIn(status, "state", "terminated", "reason")
+		state.Message = nestedStringIn(status, "state", "terminated", "message")
+		state.StartedAt = nestedStringIn(status, "state", "terminated", "startedAt")
+		state.FinishedAt = nestedStringIn(status, "state", "terminated", "finishedAt")
+		// Zero is a meaningful exit code, so the field is a pointer: an omitted one
+		// and a clean exit must not read the same.
+		if code, found, err := unstructured.NestedInt64(status, "state", "terminated", "exitCode"); found && err == nil {
+			state.ExitCode = &code
+		}
+	case has(status, "state", "waiting"):
+		state.State = "waiting"
+		state.Reason = nestedStringIn(status, "state", "waiting", "reason")
+		state.Message = nestedStringIn(status, "state", "waiting", "message")
+	}
+	return state
+}
+
+func has(obj map[string]any, path ...string) bool {
+	_, found, err := unstructured.NestedFieldNoCopy(obj, path...)
+	return found && err == nil
+}
+
+func nestedStringIn(obj map[string]any, path ...string) string {
+	value, _, _ := unstructured.NestedString(obj, path...)
+	return value
+}
+
+func nestedBoolIn(obj map[string]any, path ...string) bool {
+	value, _, _ := unstructured.NestedBool(obj, path...)
+	return value
+}
+
+func nestedIntIn(obj map[string]any, path ...string) int64 {
+	value, _, _ := unstructured.NestedInt64(obj, path...)
+	return value
 }

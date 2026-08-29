@@ -28,6 +28,13 @@ func TestSecretPatternsAreRedactedInFreeText(t *testing.T) {
 		"bearer":  "Authorization: Bearer kubeconfig-user-abc123def456ghi789",
 		"pem":     "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----",
 		"k8s key": "client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVk",
+		// The key=value form. An application log carries a credential this way far more
+		// often than the YAML one, and it went through untouched until it was noticed in
+		// a log line Kubby was about to render in a browser.
+		"assignment":        "Login failed. password=hunter2 for user 'app'",
+		"quoted":            `connecting with secret="s3cr3t v4lue" to the queue`,
+		"connection string": "Server=db;User Id=app;Password=hunter2;Encrypt=true",
+		"api key":           "GET /v1/things?api_key=abcdef123456",
 	}
 
 	for name, input := range cases {
@@ -35,6 +42,11 @@ func TestSecretPatternsAreRedactedInFreeText(t *testing.T) {
 			got := RedactString(input)
 			if !strings.Contains(got, Redacted) {
 				t.Fatalf("RedactString(%q) did not redact anything, got %q", input, got)
+			}
+			for _, secret := range []string{"hunter2", "s3cr3t v4lue", "abcdef123456"} {
+				if strings.Contains(got, secret) {
+					t.Errorf("RedactString(%q) left %q in place: %q", input, secret, got)
+				}
 			}
 		})
 	}

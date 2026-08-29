@@ -185,6 +185,70 @@ export const clusterSchema = z.object({
   metricsUrl: z.string().optional(),
   metricsUsername: z.string().optional(),
   metricsInsecureSkipVerify: z.boolean().default(false),
+  logsUrl: z.string().optional(),
+  logsIndex: z.string().optional(),
+  logsAuthScheme: z.string().optional(),
+  logsUsername: z.string().optional(),
+  logsInsecureSkipVerify: z.boolean().default(false),
+})
+
+/** One pod that keeps saying something is wrong, read out of its own logs. */
+export const logFindingSchema = z.object({
+  namespace: z.string(),
+  pod: z.string(),
+  container: z.string().optional(),
+  rule: z.string(),
+  class: z.enum(['auth', 'unreachable', 'timeout', 'generic']).catch('generic'),
+  count: z.number(),
+  summary: z.string().optional(),
+  sample: z.string(),
+  firstSeen: z.string(),
+  lastSeen: z.string(),
+  severity: z.enum(['warning', 'error']).catch('warning'),
+  // How many pods a rolled-up finding covers. Absent on a pod's own finding.
+  pods: z.number().optional(),
+})
+
+/**
+ * What a cluster's logs are saying.
+ *
+ * `unknown` is the state that matters: a store nobody could reach must never render as
+ * a cluster with nothing wrong in it.
+ */
+export const logFindingsSchema = z.object({
+  state: z.enum(['off', 'ok', 'unknown']).catch('unknown'),
+  detail: z.string().optional(),
+  sweptAt: z.string().optional(),
+  findings: z.array(logFindingSchema),
+})
+
+/** What a log-source connection test found. A failure is an answer, not an error. */
+export const logsProbeSchema = z.object({
+  reachable: z.boolean(),
+  detail: z.string().optional(),
+  probe: z
+    .object({
+      cluster: z.string().optional(),
+      version: z.string().optional(),
+      indices: z.number(),
+      documents: z.number(),
+      windowMinutes: z.number(),
+      // The whole document, so the field names can be read off it.
+      sample: z.record(z.string(), z.unknown()).optional(),
+      sampleAt: z.string().optional(),
+      messageField: z.string().optional(),
+      // How the store indexes the field the rules match against. A keyword field cannot
+      // be searched for a substring by a phrase query, and a length limit on one drops
+      // long stack traces — neither shows up as an error, only as nothing being found.
+      message: z
+        .object({
+          type: z.string().optional(),
+          analyzed: z.boolean(),
+          ignoreAbove: z.number().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 })
 export const clustersSchema = z.object({ clusters: z.array(clusterSchema) })
 
@@ -243,6 +307,21 @@ export const columnSchema = z.object({
   status: z.boolean().optional(),
 })
 
+/** One container of a pod, as much of it as a list row can say without opening the pod. */
+export const containerStateSchema = z.object({
+  name: z.string(),
+  state: z.enum(['running', 'waiting', 'terminated', '']).catch(''),
+  ready: z.boolean().optional(),
+  init: z.boolean().optional(),
+  reason: z.string().optional(),
+  message: z.string().optional(),
+  exitCode: z.number().optional(),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  restarts: z.number().optional(),
+  containerId: z.string().optional(),
+})
+
 export const rowSchema = z.object({
   name: z.string(),
   namespace: z.string().optional(),
@@ -250,6 +329,8 @@ export const rowSchema = z.object({
   createdAt: z.string(),
   fields: z.record(z.string(), z.string()),
   severity: z.enum(['warning', 'error']).optional(),
+  containerStates: z.array(containerStateSchema).optional(),
+  logFinding: logFindingSchema.optional(),
 })
 
 export const resourceListSchema = z.object({
@@ -1004,7 +1085,11 @@ export type ClusterGrant = z.infer<typeof clusterGrantSchema>
 export type Environment = Cluster['environment']
 export type ResourceType = z.infer<typeof resourceTypeSchema>
 export type ResourceCategory = ResourceType['category']
+export type LogsProbe = z.infer<typeof logsProbeSchema>
+export type LogFinding = z.infer<typeof logFindingSchema>
+export type LogFindings = z.infer<typeof logFindingsSchema>
 export type Column = z.infer<typeof columnSchema>
+export type ContainerState = z.infer<typeof containerStateSchema>
 export type ResourceRow = z.infer<typeof rowSchema>
 export type ResourceList = z.infer<typeof resourceListSchema>
 export type Overview = z.infer<typeof overviewSchema>
@@ -1072,8 +1157,28 @@ export const api = {
       metricsInsecureSkipVerify?: boolean
       metricsPassword?: string
       clearMetricsPassword?: boolean
+      logsUrl?: string
+      logsIndex?: string
+      logsAuthScheme?: string
+      logsUsername?: string
+      logsInsecureSkipVerify?: boolean
+      logsSecret?: string
+      clearLogsSecret?: boolean
     },
   ) => request(`/api/v1/clusters/${id}`, clusterSchema, { method: 'PATCH', body }),
+  logFindings: (clusterId: string, signal?: AbortSignal) =>
+    request(`/api/v1/clusters/${clusterId}/log-findings`, logFindingsSchema, { signal }),
+  probeClusterLogs: (
+    id: string,
+    body: {
+      logsUrl?: string
+      logsIndex?: string
+      logsAuthScheme?: string
+      logsUsername?: string
+      logsSecret?: string
+      logsInsecureSkipVerify?: boolean
+    },
+  ) => request(`/api/v1/clusters/${id}/logs/probe`, logsProbeSchema, { method: 'POST', body }),
   replaceCredential: (id: string, body: { kubeconfig: string; contextName?: string }) =>
     request(`/api/v1/clusters/${id}/credentials`, clusterSchema, { method: 'PUT', body }),
   testCluster: (id: string) =>

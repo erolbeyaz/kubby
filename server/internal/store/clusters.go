@@ -31,6 +31,7 @@ const clusterColumns = `
 	insecure_skip_tls_verify, proxy_url, credential_status, status_detail, k8s_version,
 	node_count, metrics_available, last_validated_at, impersonation_enabled, qps_limit,
 	read_only, metrics_url, metrics_username, metrics_insecure_skip_verify,
+	logs_url, logs_index, logs_auth_scheme, logs_username, logs_insecure_skip_verify,
 	created_by, created_at, updated_at`
 
 // Cluster is a registered Kubernetes cluster. The kubeconfig is deliberately absent:
@@ -59,9 +60,18 @@ type Cluster struct {
 	MetricsURL                string
 	MetricsUsername           string
 	MetricsInsecureSkipVerify bool
-	CreatedBy                 *uuid.UUID
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+
+	// LogsURL and friends point this cluster at the store its applications already ship
+	// their logs to. Separate from the audit sink: that is where Kubby writes its own
+	// trail, this is where the cluster's applications write theirs.
+	LogsURL                string
+	LogsIndex              string
+	LogsAuthScheme         string
+	LogsUsername           string
+	LogsInsecureSkipVerify bool
+	CreatedBy              *uuid.UUID
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 // DisplayEnvironment is what the UI shows: the free-text label when set, else the code.
@@ -339,6 +349,12 @@ type ClusterSettings struct {
 	MetricsURL                *string
 	MetricsUsername           *string
 	MetricsInsecureSkipVerify *bool
+	// LogsURL and friends point this cluster at its own log store.
+	LogsURL                *string
+	LogsIndex              *string
+	LogsAuthScheme         *string
+	LogsUsername           *string
+	LogsInsecureSkipVerify *bool
 }
 
 func (r *ClusterRepo) UpdateSettings(ctx context.Context, id uuid.UUID, s ClusterSettings) error {
@@ -355,11 +371,17 @@ func (r *ClusterRepo) UpdateSettings(ctx context.Context, id uuid.UUID, s Cluste
 			metrics_url = COALESCE($10, metrics_url),
 			metrics_username = COALESCE($11, metrics_username),
 			metrics_insecure_skip_verify = COALESCE($12, metrics_insecure_skip_verify),
+			logs_url = COALESCE($13, logs_url),
+			logs_index = COALESCE($14, logs_index),
+			logs_auth_scheme = COALESCE($15, logs_auth_scheme),
+			logs_username = COALESCE($16, logs_username),
+			logs_insecure_skip_verify = COALESCE($17, logs_insecure_skip_verify),
 			updated_at = now()
 		WHERE id = $1`,
 		id, s.Name, s.Environment, s.EnvironmentLabel, s.Color, s.ReadOnly,
 		s.ImpersonationEnabled, s.QPSLimit, s.ProxyURL,
-		s.MetricsURL, s.MetricsUsername, s.MetricsInsecureSkipVerify)
+		s.MetricsURL, s.MetricsUsername, s.MetricsInsecureSkipVerify,
+		s.LogsURL, s.LogsIndex, s.LogsAuthScheme, s.LogsUsername, s.LogsInsecureSkipVerify)
 	if isUniqueViolation(err) {
 		return ErrClusterNameInUse
 	}
@@ -402,6 +424,7 @@ func scanCluster(row scannable) (*Cluster, error) {
 		&c.StatusDetail, &c.K8sVersion, &c.NodeCount, &c.MetricsAvailable,
 		&c.LastValidatedAt, &c.ImpersonationEnabled, &c.QPSLimit, &c.ReadOnly,
 		&c.MetricsURL, &c.MetricsUsername, &c.MetricsInsecureSkipVerify,
+		&c.LogsURL, &c.LogsIndex, &c.LogsAuthScheme, &c.LogsUsername, &c.LogsInsecureSkipVerify,
 		&c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
@@ -434,6 +457,33 @@ func (r *ClusterRepo) SetMetricsPassword(ctx context.Context, clusterID uuid.UUI
 		clusterID, enc)
 	if err != nil {
 		return fmt.Errorf("store metrics password: %w", err)
+	}
+	return nil
+}
+
+// LogsSecret returns the sealed password, bearer token or API key for this cluster's log
+// source. Nil means none is stored, which is the common case.
+func (r *ClusterRepo) LogsSecret(ctx context.Context, clusterID uuid.UUID) ([]byte, error) {
+	var enc []byte
+	err := r.db.pool.QueryRow(ctx,
+		`SELECT logs_secret_enc FROM cluster_credentials WHERE cluster_id = $1`,
+		clusterID).Scan(&enc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read logs secret: %w", err)
+	}
+	return enc, nil
+}
+
+// SetLogsSecret stores or clears it, already sealed.
+func (r *ClusterRepo) SetLogsSecret(ctx context.Context, clusterID uuid.UUID, enc []byte) error {
+	_, err := r.db.pool.Exec(ctx,
+		`UPDATE cluster_credentials SET logs_secret_enc = $2 WHERE cluster_id = $1`,
+		clusterID, enc)
+	if err != nil {
+		return fmt.Errorf("store logs secret: %w", err)
 	}
 	return nil
 }

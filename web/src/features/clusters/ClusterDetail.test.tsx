@@ -26,6 +26,7 @@ const CLUSTER = {
   impersonationEnabled: false,
   qpsLimit: 50,
   metricsInsecureSkipVerify: false,
+  logsInsecureSkipVerify: false,
 } as unknown as Cluster
 
 function renderDetail(cluster: Cluster = CLUSTER, canManage = true) {

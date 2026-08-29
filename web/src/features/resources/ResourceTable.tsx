@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { Callout } from '@/components/Callout'
@@ -6,7 +7,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { TextInput } from '@/components/Field'
 import { NamespacePicker } from '@/components/NamespacePicker'
 import { VirtualRows } from '@/components/VirtualRows'
-import { ApiError, api, type Column, type ResourceRow } from '@/lib/api'
+import { ApiError, api, type Column, type ContainerState, type ResourceRow } from '@/lib/api'
 import { formatAbsolute, formatAge, isLiveAge } from '@/lib/time'
 import { useResourceStream } from '@/lib/use-resource-stream'
 import { useTicker } from '@/lib/use-ticker'
@@ -117,12 +118,18 @@ export function ResourceTable({
   // An Event's name is a generated suffix; the column would be a wall of hashes.
   const showName = !list.data?.hideName
 
+  // Column widths are remembered per kind: pods and secrets hold different things, and
+  // a width someone dragged to fit an image reference should not be undone by opening
+  // a list of config maps.
+  const { widthOf, resize, reset } = useColumnWidths(`kubby.columns.${kind}`)
+
   const grid = [
     '1.5rem',
-    showName ? NAME_WIDTH : '',
+    showName ? widthOf('name', NAME_WIDTH) : '',
     '1.5rem',
-    showNamespace ? '10rem' : '',
-    ...columns.map(widthFor),
+    '1.25rem',
+    showNamespace ? widthOf('namespace', '10rem') : '',
+    ...columns.map((column) => widthOf(column.key, widthFor(column))),
     '1.75rem',
   ]
     .filter(Boolean)
@@ -270,11 +277,28 @@ export function ResourceTable({
                   onClick={(event) => event.stopPropagation()}
                 />
                 {showName && (
-                  <HeaderCell label="Name" sortKey="name" sort={sort} desc={desc} onSort={toggleSort} />
+                  <HeaderCell
+                    label="Name"
+                    sortKey="name"
+                    sort={sort}
+                    desc={desc}
+                    onSort={toggleSort}
+                    onResize={resize}
+                    onReset={reset}
+                  />
                 )}
                 <span aria-hidden="true" />
+                <span aria-hidden="true" />
                 {showNamespace && (
-                  <HeaderCell label="Namespace" sortKey="namespace" sort={sort} desc={desc} onSort={toggleSort} />
+                  <HeaderCell
+                    label="Namespace"
+                    sortKey="namespace"
+                    sort={sort}
+                    desc={desc}
+                    onSort={toggleSort}
+                    onResize={resize}
+                    onReset={reset}
+                  />
                 )}
                 {columns.map((column) => (
                   <HeaderCell
@@ -284,6 +308,8 @@ export function ResourceTable({
                     sort={sort}
                     desc={desc}
                     onSort={toggleSort}
+                    onResize={resize}
+                    onReset={reset}
                   />
                 ))}
                 <span aria-hidden="true" />
@@ -341,6 +367,7 @@ export function ResourceTable({
                 )}
 
                 <WarningMark row={row} kind={kind} />
+                <LogMark row={row} />
 
                 {showNamespace && (
                   <LinkCell
@@ -438,7 +465,21 @@ function Cell({
   }
 
   if (column.key === 'containers') {
-    return <ContainerPips value={value} />
+    return <ContainerPips value={value} states={row.containerStates} />
+  }
+
+  // The column names one image and counts the rest; the tooltip names every container
+  // beside its own, because the first container is not necessarily the application.
+  if (column.key === 'image') {
+    return (
+      <span
+        className="truncate font-mono"
+        style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-secondary)' }}
+        title={row.fields['images'] || value}
+      >
+        {value}
+      </span>
+    )
   }
 
   if (column.link === 'owner') {
@@ -479,7 +520,36 @@ function Cell({
 }
 
 /** Ready containers as filled marks: how many are up is a shape, not a sentence. */
-function ContainerPips({ value }: { value: string }) {
+/**
+ * One square per container: what the pod is running now, and what already ran.
+ *
+ * A ready count says how many containers are wrong and never which one, which is the
+ * first thing asked of a pod with a sidecar in it. Application containers come first
+ * and init containers after, in the order they mattered.
+ */
+function ContainerPips({ value, states }: { value: string; states: ContainerState[] | undefined }) {
+  if (!states || states.length === 0) return <ContainerCount value={value} />
+
+  const shown = states.slice(0, MAX_PIPS)
+
+  return (
+    <span className="flex items-center gap-1">
+      {shown.map((state, index) => (
+        <ContainerPip key={`${state.name}-${index}`} state={state} />
+      ))}
+      {states.length > shown.length && (
+        <span style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
+          +{states.length - shown.length}
+        </span>
+      )}
+    </span>
+  )
+}
+
+const MAX_PIPS = 8
+
+/** The count the server sends alongside, for a row whose states did not come through. */
+function ContainerCount({ value }: { value: string }) {
   const [readyText, totalText] = value.split('/')
   const ready = Number(readyText)
   const total = Number(totalText)
@@ -490,7 +560,7 @@ function ContainerPips({ value }: { value: string }) {
 
   return (
     <span className="flex items-center gap-1" title={`${ready} of ${total} containers ready`}>
-      {Array.from({ length: Math.min(total, 8) }, (_, index) => (
+      {Array.from({ length: Math.min(total, MAX_PIPS) }, (_, index) => (
         <span
           key={index}
           className="h-2 w-2"
@@ -500,10 +570,117 @@ function ContainerPips({ value }: { value: string }) {
           }}
         />
       ))}
-      {total > 8 && (
-        <span style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>+{total - 8}</span>
+      {total > MAX_PIPS && (
+        <span style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>+{total - MAX_PIPS}</span>
       )}
     </span>
+  )
+}
+
+/**
+ * What a container's square says.
+ *
+ * A dim square is one that did its job and exited — an init container that completed is
+ * not a container that is missing, and colouring it like a failure sends the reader
+ * looking for a problem that is not there.
+ */
+function pipColour(state: ContainerState): string {
+  switch (state.state) {
+    case 'running':
+      return state.ready ? 'var(--status-ok)' : 'var(--status-warn)'
+    case 'waiting':
+      return 'var(--status-error)'
+    case 'terminated':
+      return state.exitCode === 0 ? 'var(--border-strong)' : 'var(--status-error)'
+    default:
+      return 'var(--border-strong)'
+  }
+}
+
+function pipSummary(state: ContainerState): string {
+  const readiness = state.ready ? 'ready' : 'not ready'
+  const reason = state.reason ? `: ${state.reason}` : ''
+  return `${state.name} — ${state.state || 'unknown'}, ${readiness}${reason}`
+}
+
+/** A square, and the container behind it while the pointer is on it. */
+function ContainerPip({ state }: { state: ContainerState }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+
+  return (
+    <>
+      <span
+        role="img"
+        aria-label={pipSummary(state)}
+        className="h-2 w-2 shrink-0"
+        style={{ borderRadius: '1px', backgroundColor: pipColour(state) }}
+        onMouseEnter={(event) => {
+          const box = event.currentTarget.getBoundingClientRect()
+          setAt({ x: box.right, y: box.top })
+        }}
+        onMouseLeave={() => setAt(null)}
+      />
+      {at && <ContainerCard state={state} at={at} />}
+    </>
+  )
+}
+
+/**
+ * The card beside the square.
+ *
+ * It is drawn into the document rather than into the row: the list scrolls inside a
+ * transformed element, which a fixed position inside it would be measured against, and
+ * the row itself clips what overflows it.
+ */
+function ContainerCard({ state, at }: { state: ContainerState; at: { x: number; y: number } }) {
+  const rows: [string, string][] = []
+  if (state.exitCode !== undefined) rows.push(['Exit Code', String(state.exitCode)])
+  if (state.reason) rows.push(['Reason', state.reason])
+  if (state.message) rows.push(['Message', state.message])
+  if (state.startedAt) rows.push(['Started At', formatAbsolute(state.startedAt)])
+  if (state.finishedAt) rows.push(['Finished At', formatAbsolute(state.finishedAt)])
+  if (state.restarts) rows.push(['Restarts', String(state.restarts)])
+  if (state.containerId) rows.push(['Container ID', state.containerId])
+
+  // Flipped to the left of the square when there is no room to its right, which is
+  // where this column sits on a narrow window.
+  const width = 340
+  const left = at.x + 10 + width > window.innerWidth ? at.x - width - 14 : at.x + 10
+
+  return createPortal(
+    <div
+      role="tooltip"
+      className="pointer-events-none fixed z-50 border px-2.5 py-2 shadow-lg"
+      style={{
+        left,
+        top: Math.min(at.y - 6, window.innerHeight - 40),
+        width,
+        borderRadius: 'var(--radius-sharp)',
+        borderColor: 'var(--border-default)',
+        backgroundColor: 'var(--bg-raised)',
+        fontSize: 'var(--text-micro)',
+      }}
+    >
+      <div className="mb-1 flex items-baseline gap-2">
+        <span className="min-w-0 truncate font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>
+          {state.name}
+        </span>
+        <span style={{ color: pipColour(state) }}>
+          {state.state || 'unknown'}, {state.ready ? 'ready' : 'not ready'}
+        </span>
+        {state.init && <span style={{ color: 'var(--text-muted)' }}>init</span>}
+      </div>
+
+      {rows.map(([label, value]) => (
+        <div key={label} className="flex flex-col">
+          <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+          <span className="break-all font-mono" style={{ color: 'var(--text-secondary)' }}>
+            {value}
+          </span>
+        </div>
+      ))}
+    </div>,
+    document.body,
   )
 }
 
@@ -543,29 +720,193 @@ function HeaderCell({
   sort,
   desc,
   onSort,
+  onResize,
+  onReset,
 }: {
   label: string
   sortKey: string
   sort: string
   desc: boolean
   onSort: (key: string) => void
+  onResize: (key: string, width: number) => void
+  onReset: (key: string) => void
 }) {
   const active = sort === sortKey || (sort === '' && sortKey === 'name')
 
   return (
-    <button
-      type="button"
-      role="columnheader"
-      aria-sort={active ? (desc ? 'descending' : 'ascending') : 'none'}
-      onClick={() => onSort(sortKey)}
-      className={`truncate text-left transition-colors hover:text-[var(--text-primary)] ${
-        active ? 'text-[var(--text-secondary)]' : ''
-      }`}
-    >
-      {label}
-      {active && <span aria-hidden="true">{desc ? ' ↓' : ' ↑'}</span>}
-    </button>
+    <div className="relative flex min-w-0 items-center">
+      <button
+        type="button"
+        role="columnheader"
+        aria-sort={active ? (desc ? 'descending' : 'ascending') : 'none'}
+        onClick={() => onSort(sortKey)}
+        className={`min-w-0 flex-1 truncate text-left transition-colors hover:text-[var(--text-primary)] ${
+          active ? 'text-[var(--text-secondary)]' : ''
+        }`}
+      >
+        {label}
+        {active && <span aria-hidden="true">{desc ? ' ↓' : ' ↑'}</span>}
+      </button>
+      <ColumnResizer columnKey={sortKey} label={label} onResize={onResize} onReset={onReset} />
+    </div>
   )
+}
+
+const MIN_COLUMN_WIDTH = 48
+
+/**
+ * The grip between two columns.
+ *
+ * It sits in the gap the grid already leaves, so dragging it does not shift the header
+ * text; the hit area is wider than the line, because a 1px target is a fussy thing to
+ * catch and this one is dragged often. Double-clicking gives the column back its
+ * default, which is otherwise unreachable once it has been dragged.
+ */
+function ColumnResizer({
+  columnKey,
+  label,
+  onResize,
+  onReset,
+}: {
+  columnKey: string
+  label: string
+  onResize: (key: string, width: number) => void
+  onReset: (key: string) => void
+}) {
+  const [dragging, setDragging] = useState(false)
+  const startX = useRef(0)
+  const startWidth = useRef(0)
+
+  useEffect(() => {
+    if (!dragging) return
+
+    const move = (event: PointerEvent) =>
+      onResize(columnKey, Math.max(MIN_COLUMN_WIDTH, startWidth.current + event.clientX - startX.current))
+    const up = () => setDragging(false)
+
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    // A drag over the header would otherwise select its text, which makes the resize
+    // feel like it broke something.
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+  }, [dragging, columnKey, onResize])
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${label}`}
+      tabIndex={0}
+      onPointerDown={(event) => {
+        const cell = event.currentTarget.parentElement
+        if (!cell) return
+        event.preventDefault()
+        event.stopPropagation()
+        startX.current = event.clientX
+        startWidth.current = cell.offsetWidth
+        setDragging(true)
+      }}
+      onDoubleClick={(event) => {
+        event.stopPropagation()
+        onReset(columnKey)
+      }}
+      onKeyDown={(event) => {
+        // Resizing from the keyboard, because this tool is meant to be usable without
+        // a mouse. The width is read off the cell so the first press starts from what
+        // is on screen rather than from a default the column may not be at.
+        const cell = event.currentTarget.parentElement
+        if (!cell) return
+        if (event.key === 'ArrowRight') onResize(columnKey, cell.offsetWidth + 16)
+        if (event.key === 'ArrowLeft') onResize(columnKey, Math.max(MIN_COLUMN_WIDTH, cell.offsetWidth - 16))
+      }}
+      className="absolute -right-2.5 top-0 z-10 h-full w-2 cursor-col-resize"
+    >
+      <div
+        className="pointer-events-none mx-auto h-full w-px transition-colors"
+        style={{ backgroundColor: dragging ? 'var(--accent)' : 'transparent' }}
+      />
+    </div>
+  )
+}
+
+/**
+ * Column widths the reader has dragged, remembered per kind.
+ *
+ * Only the columns actually dragged are stored: a default that changes later should
+ * reach lists nobody has adjusted, rather than being frozen the first time someone
+ * opened them.
+ */
+function useColumnWidths(storageKey: string) {
+  const [widths, setWidths] = useState<Record<string, number>>(() => readStoredWidths(storageKey))
+  const [loadedKey, setLoadedKey] = useState(storageKey)
+
+  // The reader has moved to another kind, whose widths are its own. Reading them here
+  // rather than in an effect means the first paint is already the right shape.
+  if (loadedKey !== storageKey) {
+    setLoadedKey(storageKey)
+    setWidths(readStoredWidths(storageKey))
+  }
+
+  // A drag reads the current widths from an event handler, where state would be the
+  // value captured when the handler was created.
+  const widthsRef = useRef(widths)
+  useEffect(() => {
+    widthsRef.current = widths
+  }, [widths])
+
+  const store = useCallback(
+    (next: Record<string, number>) => {
+      setWidths(next)
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(next))
+      } catch {
+        // Private browsing and blocked storage are fine; widths simply reset.
+      }
+    },
+    [storageKey],
+  )
+
+  const resize = useCallback(
+    (key: string, width: number) => store({ ...widthsRef.current, [key]: Math.round(width) }),
+    [store],
+  )
+
+  const reset = useCallback(
+    (key: string) => {
+      const next = { ...widthsRef.current }
+      delete next[key]
+      store(next)
+    },
+    [store],
+  )
+
+  const widthOf = (key: string, fallback: string) =>
+    widths[key] !== undefined ? `${widths[key]}px` : fallback
+
+  return { widthOf, resize, reset }
+}
+
+function readStoredWidths(key: string): Record<string, number> {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
+    if (stored === null || typeof stored !== 'object') return {}
+
+    const widths: Record<string, number> = {}
+    for (const [column, width] of Object.entries(stored as Record<string, unknown>)) {
+      if (typeof width === 'number' && Number.isFinite(width) && width > 0) widths[column] = width
+    }
+    return widths
+  } catch {
+    return {}
+  }
 }
 
 /** Column widths chosen so the name keeps the space and the rest stays compact. */
@@ -583,6 +924,10 @@ function widthFor(column: Column): string {
     case 'controlledBy':
     case 'node':
       return 'minmax(8rem, 1fr)'
+    // Image references are long and worth reading; the column is given room to show a
+    // registry host and a tag rather than eliding both.
+    case 'image':
+      return 'minmax(12rem, 1.6fr)'
     default:
       return 'minmax(6rem, 1fr)'
   }
@@ -628,6 +973,117 @@ function FloatingButton({
         <path d={path} />
       </svg>
     </button>
+  )
+}
+
+/**
+ * The mark that says this object's own logs keep reporting a problem.
+ *
+ * A different shape from the triangle beside it, and deliberately so. The triangle is
+ * what Kubernetes reports — a fact from the API. This is a reading of somebody's log
+ * output against a pattern, which is a weaker claim, and drawing them identically would
+ * spend the credibility of the reliable one on the inferred one.
+ *
+ * Shape carries where it came from; colour carries how bad it is.
+ */
+function LogMark({ row }: { row: ResourceRow }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+
+  const finding = row.logFinding
+  if (!finding) return <span aria-hidden="true" />
+
+  const colour = finding.severity === 'error' ? 'var(--status-error)' : 'var(--status-warn)'
+  const pods = finding.pods && finding.pods > 1 ? ` across ${finding.pods} pods` : ''
+
+  return (
+    <>
+      <span
+        role="img"
+        aria-label={`Logs report ${finding.rule}${pods}: ${finding.sample}`}
+        className="flex h-5 w-5 shrink-0 items-center justify-center"
+        style={{ color: colour }}
+        onMouseEnter={(event) => {
+          const box = event.currentTarget.getBoundingClientRect()
+          setAt({ x: box.right, y: box.top })
+        }}
+        onMouseLeave={() => setAt(null)}
+      >
+        {/* Lines on a page: what the log says, not what the cluster says. */}
+        <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="2" y="1.5" width="12" height="13" rx="1.5" fill="currentColor" />
+          <path
+            d="M4.6 5h6.8M4.6 8h6.8M4.6 11h4"
+            stroke="var(--bg-base)"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+        </svg>
+      </span>
+      {at && <LogFindingCard finding={finding} at={at} />}
+    </>
+  )
+}
+
+/** What the logs said, beside the mark that says they said something. */
+function LogFindingCard({
+  finding,
+  at,
+}: {
+  finding: NonNullable<ResourceRow['logFinding']>
+  at: { x: number; y: number }
+}) {
+  const colour = finding.severity === 'error' ? 'var(--status-error)' : 'var(--status-warn)'
+
+  const width = 380
+  const left = at.x + 10 + width > window.innerWidth ? at.x - width - 14 : at.x + 10
+
+  return createPortal(
+    <div
+      role="tooltip"
+      className="pointer-events-none fixed z-50 border px-2.5 py-2 shadow-lg"
+      style={{
+        left,
+        top: Math.min(at.y - 6, window.innerHeight - 40),
+        width,
+        borderRadius: 'var(--radius-sharp)',
+        borderColor: 'var(--border-default)',
+        backgroundColor: 'var(--bg-raised)',
+        fontSize: 'var(--text-micro)',
+      }}
+    >
+      <div className="mb-1 flex items-baseline gap-2">
+        <span className="font-semibold" style={{ color: colour }}>
+          {finding.rule}
+        </span>
+        <span style={{ color: 'var(--text-muted)' }}>{finding.class}</span>
+        <span className="ml-auto shrink-0 font-mono" style={{ color: 'var(--text-secondary)' }}>
+          {finding.count.toLocaleString()} lines
+        </span>
+      </div>
+
+      <div className="mb-1.5" style={{ color: 'var(--text-muted)' }}>
+        {finding.pods && finding.pods > 1 && (
+          <span style={{ color: 'var(--text-secondary)' }}>{finding.pods} pods · </span>
+        )}
+        {/* How long it has been going on is the number that decides whether to stop and
+            look now. The one that started this work had been failing for 22 hours. */}
+        first seen {formatAge(finding.firstSeen)} ago · last {formatAge(finding.lastSeen)} ago
+      </div>
+
+      {finding.summary && (
+        <div className="mb-1.5 font-mono" style={{ color: 'var(--text-primary)' }}>
+          {finding.summary}
+        </div>
+      )}
+
+      <div
+        className="border-t pt-1.5 font-mono break-words"
+        style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+      >
+        {finding.sample}
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -696,11 +1152,8 @@ function troubleWith(row: ResourceRow, kind: string): string {
     return reason && reason !== status ? `${kind} is ${status}: ${reason}` : `${kind} is ${status}`
   }
 
-  const restarts = Number(row.fields['restarts'] ?? '0')
-  if (Number.isFinite(restarts) && restarts > 0) {
-    return `Restarted ${restarts} ${restarts === 1 ? 'time' : 'times'}`
-  }
-
+  // Past restarts do not raise a mark of their own. What restarted is in the restart
+  // column and why is in the panel; a settled pod that once crashed is working now.
   if (row.severity) return `This ${kind} needs attention`
   return ''
 }

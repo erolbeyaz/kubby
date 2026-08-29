@@ -10,6 +10,7 @@ const base = {
   environmentLabel: '', color: '', authSource: 'kubeconfig', insecureSkipTlsVerify: false,
   metricsAvailable: true, readOnly: false, impersonationEnabled: false, qpsLimit: 50,
   metricsInsecureSkipVerify: false,
+  logsInsecureSkipVerify: false,
 }
 
 const CLUSTERS = [

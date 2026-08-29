@@ -9,6 +9,7 @@ import { formatAbsolute, formatAge } from '@/lib/time'
 import { toYaml } from '@/lib/yaml'
 
 import { availableActionsFor } from './actions'
+import { containersOf, formatQuantities, podSpecOf, pulledFrom, registryOf, volumesOf } from './containers'
 import { Relations } from './Relations'
 import { RestartBadge } from './RestartBadge'
 import { SecretKeys } from './SecretKeys'
@@ -307,39 +308,45 @@ function Summary({
           </div>
         </Group>
       ) : (
-        <Containers spec={spec} status={status} row={row} kind={kind} />
+        <>
+          <Containers spec={spec} status={status} row={row} kind={kind} init={false} />
+          {/* Init containers get their own section rather than a badge among the rest:
+              they ran and exited before anything else started, and reading them beside
+              the containers still running invites treating the two as the same thing. */}
+          <Containers spec={spec} status={status} row={row} kind={kind} init />
+          <Volumes spec={spec} kind={kind} />
+        </>
       )}
-
-      <Group title="Coming next">
-        <div className="px-3 py-2" style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
-          Logs, describe and restart analysis arrive in phase 5; events in phase 6;
-          exec and port-forward in phase 8.
-        </div>
-      </Group>
     </div>
   )
 }
 
-/** Containers with their images, ports and how much of their limit they are using. */
+/**
+ * The containers a resource runs, and what each one is made of.
+ *
+ * A pod shows what it is running; a workload shows what it will run, read out of the
+ * template it stamps out — "which image is this" is asked of a deployment at least as
+ * often as of one of its pods.
+ */
 function Containers({
   spec,
   status,
   row,
   kind,
+  init,
 }: {
   spec: Record<string, unknown>
   status: Record<string, unknown>
   row: ResourceRow
   kind: string
+  init: boolean
 }) {
-  if (kind !== 'Pod') return null
-
-  const containers = Array.isArray(spec.containers) ? (spec.containers as Record<string, unknown>[]) : []
+  const containers = containersOf(podSpecOf(kind, spec)).filter((container) => container.init === init)
   if (containers.length === 0) return null
 
-  const statuses = Array.isArray(status.containerStatuses)
-    ? (status.containerStatuses as Record<string, unknown>[])
-    : []
+  const isPod = kind === 'Pod'
+  const statuses = init ? status.initContainerStatuses : status.containerStatuses
+  const containerStatuses = Array.isArray(statuses) ? (statuses as Record<string, unknown>[]) : []
 
   // Usage is measured for the pod as a whole, so it is divided evenly rather than
   // claimed per container — an honest approximation beats a precise-looking guess.
@@ -347,62 +354,238 @@ function Containers({
   const podMemory = parseMi(row.fields['memory'] ?? '')
 
   return (
-    <Group title={`Containers (${containers.length})`}>
+    <Group title={`${init ? 'Init Containers' : 'Containers'} (${containers.length})`}>
       <div className="flex flex-col gap-3 px-3 py-2">
         {containers.map((container) => {
-          const name = text(container.name)
-          const containerStatus = statuses.find((s) => text(s.name) === name)
-          const ready = Boolean(containerStatus?.ready)
-          const resources = (container.resources ?? {}) as Record<string, unknown>
-          const requests = (resources.requests ?? {}) as Record<string, string>
-          const limits = (resources.limits ?? {}) as Record<string, string>
+          const containerStatus = containerStatuses.find((s) => text(s.name) === container.name)
+          const state = containerState(containerStatus)
 
           return (
-            <div key={name}>
-              <div className="mb-1.5 flex items-center gap-2">
-                <span
-                  className="h-2 w-2 shrink-0"
-                  style={{
-                    borderRadius: '1px',
-                    backgroundColor: ready ? 'var(--status-ok)' : 'var(--status-warn)',
-                  }}
-                />
-                <span style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-primary)' }}>{name}</span>
-                <span
-                  className="ml-auto"
-                  style={{ fontSize: 'var(--text-micro)', color: ready ? 'var(--status-ok)' : 'var(--status-warn)' }}
-                >
-                  {ready ? 'ready' : 'not ready'}
+            <div key={container.name}>
+              <div className="mb-1 flex items-center gap-2">
+                {isPod && (
+                  <span
+                    className="h-2 w-2 shrink-0"
+                    style={{ borderRadius: '1px', backgroundColor: statusColor(state.label) }}
+                  />
+                )}
+                <span style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-primary)' }}>
+                  {container.name}
                 </span>
+                {isPod && state.label && (
+                  <span
+                    className="ml-auto"
+                    style={{ fontSize: 'var(--text-micro)', color: statusColor(state.label) }}
+                    title={state.detail}
+                  >
+                    {state.label}
+                  </span>
+                )}
               </div>
 
-              <p
-                className="mb-2 truncate font-mono"
-                style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
-                title={text(container.image)}
-              >
-                {text(container.image)}
-              </p>
+              <ContainerField label="Image">
+                <div className="flex items-start gap-1.5">
+                  <span className="min-w-0 flex-1 font-mono break-all" style={{ color: 'var(--text-primary)' }}>
+                    {container.image}
+                  </span>
+                  <CopyButton value={container.image} label="Copy image" />
+                </div>
+                <ImageOrigin
+                  image={container.image}
+                  pullPolicy={container.pullPolicy}
+                  imageID={isPod ? text(containerStatus?.imageID) : ''}
+                />
+              </ContainerField>
 
-              <UsageBar
-                label="CPU"
-                used={podCpu / containers.length}
-                request={parseMilli(requests.cpu ?? '')}
-                limit={parseMilli(limits.cpu ?? '')}
-                format={(value) => `${Math.round(value)}m`}
-              />
-              <UsageBar
-                label="Memory"
-                used={podMemory / containers.length}
-                request={parseMi(requests.memory ?? '')}
-                limit={parseMi(limits.memory ?? '')}
-                format={(value) => `${Math.round(value)}Mi`}
-              />
+              {container.ports.length > 0 && (
+                <ContainerField label="Ports">
+                  <span className="font-mono">
+                    {container.ports
+                      .map((port) => `${port.port}/${port.protocol}${port.name ? ` ${port.name}` : ''}`)
+                      .join(' · ')}
+                  </span>
+                </ContainerField>
+              )}
+
+              {/* Requests and limits, spelled out. The bars below show what is being
+                  used against them; the numbers are what was actually asked for, and
+                  a container with neither is the one worth noticing. */}
+              <ContainerField label="Requests">
+                <span className="font-mono">{formatQuantities(container.requests) || 'none'}</span>
+              </ContainerField>
+              <ContainerField label="Limits">
+                <span className="font-mono">{formatQuantities(container.limits) || 'none'}</span>
+              </ContainerField>
+
+              {container.mounts.length > 0 && (
+                <ContainerField label="Mounts">
+                  <div className="flex flex-col gap-0.5 font-mono">
+                    {container.mounts.map((mount) => (
+                      <span key={`${mount.volume}:${mount.path}`} className="break-all">
+                        {mount.path}
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          {' ← '}
+                          {mount.volume}
+                          {mount.readOnly && ' (ro)'}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </ContainerField>
+              )}
+
+              {isPod && !init && (
+                <div className="mt-1.5">
+                  <UsageBar
+                    label="CPU"
+                    used={podCpu / Math.max(containers.length, 1)}
+                    request={parseMilli(container.requests.cpu ?? '')}
+                    limit={parseMilli(container.limits.cpu ?? '')}
+                    format={(value) => `${Math.round(value)}m`}
+                  />
+                  <UsageBar
+                    label="Memory"
+                    used={podMemory / Math.max(containers.length, 1)}
+                    request={parseMi(container.requests.memory ?? '')}
+                    limit={parseMi(container.limits.memory ?? '')}
+                    format={(value) => `${Math.round(value)}Mi`}
+                  />
+                </div>
+              )}
             </div>
           )
         })}
       </div>
     </Group>
+  )
+}
+
+/** The volumes the pod carries, and what backs each one. */
+function Volumes({ spec, kind }: { spec: Record<string, unknown>; kind: string }) {
+  const volumes = volumesOf(podSpecOf(kind, spec))
+  if (volumes.length === 0) return null
+
+  return (
+    <Group title={`Volumes (${volumes.length})`}>
+      <div className="flex flex-col px-3 py-2" style={{ fontSize: 'var(--text-micro)' }}>
+        {volumes.map((volume) => (
+          <div key={volume.name} className="flex items-baseline gap-2 py-0.5">
+            <span className="min-w-0 flex-1 truncate font-mono" style={{ color: 'var(--text-primary)' }}>
+              {volume.name}
+            </span>
+            <span className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
+              {volume.type}
+            </span>
+            {volume.source && (
+              <span className="min-w-0 max-w-[45%] truncate font-mono" style={{ color: 'var(--text-muted)' }} title={volume.source}>
+                {volume.source}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </Group>
+  )
+}
+
+/**
+ * One labelled line inside a container block.
+ *
+ * The labels carry the accent and the values do not: a container block is a short list
+ * of unlike things — an address, a port, two quantities, a path — and the label is what
+ * the eye lands on to find the one it came for.
+ */
+function ContainerField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[4.5rem_1fr] items-baseline gap-2 py-0.5" style={{ fontSize: 'var(--text-micro)' }}>
+      <dt className="uppercase tracking-[0.04em]" style={{ color: 'var(--accent)' }}>
+        {label}
+      </dt>
+      <dd className="min-w-0" style={{ color: 'var(--text-secondary)' }}>
+        {children}
+      </dd>
+    </div>
+  )
+}
+
+/**
+ * What a container is doing, in the words the rest of the interface uses.
+ *
+ * "not ready" was the only thing said about a container that was not ready, which is
+ * the state of every init container that has done its job and of every container still
+ * starting. The state itself says more, and says it the same way the status column does.
+ */
+function containerState(containerStatus: Record<string, unknown> | undefined): {
+  label: string
+  detail: string
+} {
+  if (!containerStatus) return { label: '', detail: '' }
+
+  const state = (containerStatus.state ?? {}) as Record<string, unknown>
+  const running = state.running as Record<string, unknown> | undefined
+  const waiting = state.waiting as Record<string, unknown> | undefined
+  const terminated = state.terminated as Record<string, unknown> | undefined
+
+  if (waiting) return { label: text(waiting.reason) || 'Waiting', detail: text(waiting.message) }
+  if (terminated) {
+    const reason = text(terminated.reason) || 'Terminated'
+    const code = terminated.exitCode
+    return {
+      label: reason,
+      detail: typeof code === 'number' ? `exit code ${code}` : text(terminated.message),
+    }
+  }
+  if (running) return { label: containerStatus.ready === true ? 'Running' : 'Starting', detail: '' }
+  return { label: '', detail: '' }
+}
+
+/**
+ * The registry an image resolves to, under the reference itself.
+ *
+ * The reference alone does not answer where a container comes from: a name with no host
+ * in it is Docker Hub, which is worth saying out loud in an environment whose nodes are
+ * only supposed to pull from a mirror.
+ */
+function ImageOrigin({
+  image,
+  pullPolicy,
+  imageID,
+}: {
+  image: string
+  pullPolicy: string
+  imageID: string
+}) {
+  const origin = registryOf(image)
+  const pulled = pulledFrom(image, imageID)
+
+  return (
+    <div className="flex flex-col" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex flex-wrap gap-x-3">
+        {origin && (
+          <span>
+            registry{' '}
+            <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>
+              {origin.host}
+            </span>
+            {origin.implicit && ' (implicit)'}
+          </span>
+        )}
+        {pullPolicy && (
+          <span>
+            pull <span className="font-mono">{pullPolicy}</span>
+          </span>
+        )}
+      </div>
+
+      {pulled && (
+        <div>
+          pulled{' '}
+          <span className="font-mono break-all" style={{ color: 'var(--text-secondary)' }} title={pulled}>
+            {pulled}
+          </span>
+        </div>
+      )}
+    </div>
   )
 }
 

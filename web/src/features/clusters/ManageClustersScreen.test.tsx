@@ -20,6 +20,7 @@ const base = {
   impersonationEnabled: false,
   qpsLimit: 50,
   metricsInsecureSkipVerify: false,
+  logsInsecureSkipVerify: false,
 }
 
 const CLUSTERS = [

@@ -27,6 +27,10 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`),
 	// kubeconfig inline credentials.
 	regexp.MustCompile(`(?i)(client-key-data|token)\s*:\s*\S+`),
+	// Credentials written as key=value inside a message. Connection strings, command
+	// lines and application logs all carry them this way, and the colon form above only
+	// catches the YAML one — `password=hunter2` went through untouched.
+	regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|api[_-]?key|access[_-]?key)\s*=\s*("[^"]*"|'[^']*'|\S+)`),
 }
 
 // IsSensitiveKey reports whether a field name should have its value replaced entirely.

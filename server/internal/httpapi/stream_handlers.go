@@ -85,6 +85,16 @@ func (h *resourceHandlers) streamResources(w http.ResponseWriter, r *http.Reques
 				continue
 			}
 
+			// The same join the list does. A watch replaces a row wholesale, so without
+			// this the mark a list drew disappears the moment anything about the object
+			// changes — and a fresh watch replays every object as an addition, which
+			// means it would never survive the first second.
+			if h.logs != nil && change.Row != nil {
+				rows := []cluster.Row{*change.Row}
+				h.logs.Attach(c.ID.String(), resourceType.Kind, rows)
+				change.Row = &rows[0]
+			}
+
 			payload, err := json.Marshal(change)
 			if err != nil {
 				continue
