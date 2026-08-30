@@ -28,6 +28,7 @@ import { TerminalPane } from '@/features/terminal/TerminalPane'
 import { nodeShellPath } from '@/lib/exec-stream'
 
 import { PortForwardDialog } from './PortForwardDialog'
+import { PortForwards } from './PortForwards'
 
 import { ActionRunner, type PendingAction } from './ActionRunner'
 import { DrainDialog } from './DrainDialog'
@@ -367,6 +368,10 @@ export function ResourceExplorer({
           <div className="min-w-0 flex-1">
             <HelmReleases clusterId={cluster.id} namespaces={location.namespaces} />
           </div>
+        ) : location.typeKey === 'port-forwards' ? (
+          <div className="min-w-0 flex-1">
+            <PortForwards clusterId={cluster.id} />
+          </div>
         ) : location.typeKey === 'health' ? (
           <div className="min-w-0 flex-1">
             <HealthPanel
@@ -539,8 +544,8 @@ export function ResourceExplorer({
         <PortForwardDialog
           clusterId={cluster.id}
           typeKey={location.typeKey}
-          kind={kind}
-          row={forwarding}
+          name={forwarding.name}
+          namespace={forwarding.namespace ?? ''}
           onOpened={() => {
             // Nothing to open here: the tunnel is a browser tab now, and the chip in the
             // toolbar is where it is stopped.

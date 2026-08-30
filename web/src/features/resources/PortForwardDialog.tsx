@@ -2,75 +2,76 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { CopyButton } from '@/components/CopyButton'
-import { ApiError, api, type Forward, type ResourceRow } from '@/lib/api'
+import { ApiError, api, type Forward } from '@/lib/api'
 
 interface PortForwardDialogProps {
   clusterId: string
   typeKey: string
-  kind: string
-  row: ResourceRow
+  /** What is being forwarded, for the title. */
+  name: string
+  namespace: string
+  /**
+   * The port inside the cluster. Absent when the dialog was reached from the row's own
+   * menu rather than from a port, in which case it asks which one.
+   */
+  port?: number | undefined
   onOpened: (forward: Forward) => void
   onClose: () => void
 }
 
 /**
- * Reaching a port inside the cluster.
+ * Where a forward is configured, for the times the defaults are not right.
  *
- * Kubby opens a real port on its own host and pipes it to the pod, which is what makes an
- * arbitrary web application work: it gets an origin of its own at its own root, so its
- * absolute asset paths and its cookies both land where it expects them. Serving it under
- * a path of Kubby's instead breaks every app that builds a URL in JavaScript.
- *
- * That port is on the machine running Kubby. When that is the reader's own machine — the
- * ordinary case — it is theirs to open. When it is not, the tunnel falls back to the
- * proxy and the dialog says so rather than handing out an address nobody can reach.
+ * Reaching a port usually needs no decisions at all — that is what clicking the port
+ * itself is for. This is the other case: a fixed local port because something is
+ * configured to expect one, or a target that speaks TLS, where the scheme has to be
+ * right or the page will not load.
  */
 export function PortForwardDialog({
   clusterId,
   typeKey,
-  kind,
-  row,
+  name,
+  namespace,
+  port,
   onOpened,
   onClose,
 }: PortForwardDialogProps) {
   const queryClient = useQueryClient()
-  const namespace = row.namespace ?? ''
-
-  const ports = useQuery({
-    queryKey: ['ports', clusterId, typeKey, namespace, row.name],
-    queryFn: ({ signal }) => api.forwardablePorts(clusterId, typeKey, namespace, row.name, signal),
-  })
-
-  const declared = ports.data?.ports ?? []
-  const [chosen, setChosen] = useState<number | null>(null)
-  const [typed, setTyped] = useState('')
+  const [chosen, setChosen] = useState<number | null>(port ?? null)
   const [localPort, setLocalPort] = useState('')
+  const [https, setHttps] = useState(false)
   const [openInBrowser, setOpenInBrowser] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  // A declared port is the common case; a typed one covers a container that listens on
-  // more than it declares, which is normal and not worth blocking on.
-  const port = typed.trim() !== '' ? Number(typed) : (chosen ?? declared[0]?.port ?? null)
-  const valid = port !== null && Number.isInteger(port) && port > 0 && port <= 65535
+  // Only asked for when the caller did not already know: clicking a port answers this
+  // question by existing.
+  const declared = useQuery({
+    queryKey: ['ports', clusterId, typeKey, namespace, name],
+    queryFn: ({ signal }) => api.forwardablePorts(clusterId, typeKey, namespace, name, signal),
+    enabled: port === undefined,
+  })
 
-  const run = async () => {
-    if (!valid) return
+  const ports = declared.data?.ports ?? []
+  const target = chosen ?? ports[0]?.port ?? null
+
+  const start = async () => {
+    if (target === null) return
     setBusy(true)
     setError('')
     try {
       const forward = await api.startForward(clusterId, {
         type: typeKey,
         namespace,
-        name: row.name,
-        port,
+        name,
+        port: target,
         ...(localPort.trim() ? { localPort: Number(localPort) } : {}),
+        ...(https ? { https: true } : {}),
       })
       void queryClient.invalidateQueries({ queryKey: ['forwards', clusterId] })
 
-      // Opened here rather than after the dialog closes: a browser only treats a new
-      // window as wanted while it can still see the click that asked for it.
+      // Opened from the click that asked for it: a browser only counts a new window as
+      // wanted while it can still see the gesture behind it.
       if (openInBrowser) {
         window.open(forward.url, '_blank', 'noopener')
       }
@@ -85,129 +86,89 @@ export function PortForwardDialog({
 
   return (
     <ConfirmDialog
-      title={`Forward a port from ${kind} ${namespace ? `${namespace}/` : ''}${row.name}`}
+      title={`Port forwarding for ${name}`}
       confirmLabel="Start"
       busy={busy}
-      disabled={!valid}
+      disabled={target === null}
       {...(error ? { error } : {})}
-      onConfirm={() => void run()}
+      onConfirm={() => void start()}
       onCancel={onClose}
     >
-      {ports.isPending ? (
-        <p style={{ color: 'var(--text-muted)' }}>Reading the declared ports…</p>
-      ) : declared.length === 0 ? (
-        <p style={{ color: 'var(--text-muted)' }}>
-          This {kind.toLowerCase()} declares no ports. Type one below if you know what it
-          listens on.
+      <div className="flex flex-col gap-3 text-left">
+        {port === undefined && (
+          <div className="flex flex-col gap-1.5">
+            <span style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-secondary)' }}>
+              Port to forward:
+            </span>
+            {ports.length === 0 ? (
+              <span style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
+                {declared.isPending
+                  ? 'Reading the declared ports…'
+                  : 'Nothing is declared here. Forward from a port on the detail panel instead.'}
+              </span>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {ports.map((option) => (
+                  <button
+                    key={`${option.container ?? ''}:${option.port}`}
+                    type="button"
+                    onClick={() => setChosen(option.port)}
+                    className="tool-chip font-mono"
+                    style={{
+                      borderColor: target === option.port ? 'var(--accent)' : 'var(--border-default)',
+                      color: target === option.port ? 'var(--accent)' : 'var(--text-secondary)',
+                    }}
+                  >
+                    {option.port}
+                    {option.name ? ` · ${option.name}` : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <label className="flex items-center gap-3" style={{ fontSize: 'var(--text-secondary-size)' }}>
+          <span style={{ color: 'var(--text-secondary)' }}>Local port to forward from:</span>
+          <input
+            value={localPort}
+            onChange={(event) => setLocalPort(event.target.value.replace(/[^0-9]/g, ''))}
+            inputMode="numeric"
+            placeholder="Random"
+            aria-label="Local port to forward from"
+            autoFocus
+            className="min-w-0 flex-1 border-0 border-b bg-transparent px-1 py-1 font-mono outline-none"
+            style={{
+              borderColor: 'var(--accent)',
+              color: 'var(--text-primary)',
+              fontSize: 'var(--text-secondary-size)',
+            }}
+          />
+        </label>
+
+        <label className="flex items-center gap-2" style={{ fontSize: 'var(--text-secondary-size)' }}>
+          <input type="checkbox" checked={https} onChange={(event) => setHttps(event.target.checked)} />
+          {/* The tunnel carries bytes either way; this decides the scheme of the address
+              handed to the browser, and the wrong one is a page that will not load. */}
+          <span style={{ color: 'var(--text-secondary)' }}>https</span>
+        </label>
+
+        <label className="flex items-center gap-2" style={{ fontSize: 'var(--text-secondary-size)' }}>
+          <input
+            type="checkbox"
+            checked={openInBrowser}
+            onChange={(event) => setOpenInBrowser(event.target.checked)}
+          />
+          <span style={{ color: 'var(--text-secondary)' }}>Open in Browser</span>
+        </label>
+
+        <p style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
+          Forwarding {namespace ? `${namespace}/` : ''}
+          {name}
+          {target !== null ? `:${target}` : ''}. The port opens on the machine running Kubby
+          and carries no authentication of its own.
         </p>
-      ) : (
-        <div className="flex flex-wrap justify-center gap-1.5">
-          {declared.map((option) => {
-            const selected = typed.trim() === '' && (chosen ?? declared[0]?.port) === option.port
-            return (
-              <button
-                key={`${option.container ?? ''}:${option.port}`}
-                type="button"
-                onClick={() => {
-                  setChosen(option.port)
-                  setTyped('')
-                }}
-                className="tool-chip font-mono"
-                style={{
-                  borderColor: selected ? 'var(--accent)' : 'var(--border-default)',
-                  color: selected ? 'var(--accent)' : 'var(--text-secondary)',
-                }}
-              >
-                {option.port}
-                {option.name ? ` · ${option.name}` : ''}
-                {option.protocol !== 'TCP' ? ` · ${option.protocol}` : ''}
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      <label
-        className="mt-3 flex items-center justify-center gap-2"
-        style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
-      >
-        or port
-        <input
-          value={typed}
-          onChange={(event) => setTyped(event.target.value.replace(/[^0-9]/g, ''))}
-          inputMode="numeric"
-          placeholder="8080"
-          className="w-24 border px-2 py-1 text-center font-mono"
-          style={{
-            borderRadius: 'var(--radius-sharp)',
-            borderColor: 'var(--border-default)',
-            backgroundColor: 'var(--bg-raised)',
-            color: 'var(--text-primary)',
-            fontSize: 'var(--text-secondary-size)',
-          }}
-        />
-      </label>
-
-      <label
-        className="mt-3 flex items-center justify-center gap-2"
-        style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
-      >
-        local port
-        <input
-          value={localPort}
-          onChange={(event) => setLocalPort(event.target.value.replace(/[^0-9]/g, ''))}
-          inputMode="numeric"
-          placeholder="Random"
-          aria-label="Local port to forward from"
-          className="w-24 border px-2 py-1 text-center font-mono"
-          style={{
-            borderRadius: 'var(--radius-sharp)',
-            borderColor: 'var(--border-default)',
-            backgroundColor: 'var(--bg-raised)',
-            color: 'var(--text-primary)',
-            fontSize: 'var(--text-secondary-size)',
-          }}
-        />
-      </label>
-
-      <label
-        className="mt-2 flex items-center justify-center gap-2"
-        style={{ fontSize: 'var(--text-micro)', color: 'var(--text-secondary)' }}
-      >
-        <input
-          type="checkbox"
-          checked={openInBrowser}
-          onChange={(event) => setOpenInBrowser(event.target.checked)}
-        />
-        Open in a new browser tab
-      </label>
-
-      <p className="mt-3" style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
-        For a port that does not speak HTTP — a database, gRPC — run it locally instead:
-      </p>
-
-      <div className="mt-1.5 flex items-center justify-center gap-2">
-        <code
-          className="truncate px-2 py-1 font-mono"
-          style={{
-            fontSize: 'var(--text-micro)',
-            backgroundColor: 'var(--bg-raised)',
-            color: 'var(--text-secondary)',
-            borderRadius: 'var(--radius-sharp)',
-          }}
-        >
-          {kubectlCommand(namespace, typeKey, row.name, port)}
-        </code>
-        <CopyButton value={kubectlCommand(namespace, typeKey, row.name, port)} label="Copy" />
       </div>
     </ConfirmDialog>
   )
-}
-
-/** The same forward as a local one, for a port a browser cannot speak to. */
-function kubectlCommand(namespace: string, typeKey: string, name: string, port: number | null): string {
-  const kind = typeKey.includes('/') ? typeKey.split('/')[1] : typeKey
-  const singular = kind?.replace(/s$/, '') ?? 'pod'
-  const number = port ?? 8080
-  return `kubectl -n ${namespace} port-forward ${singular}/${name} ${number}:${number}`
 }

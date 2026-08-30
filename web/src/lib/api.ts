@@ -1018,6 +1018,9 @@ const forwardSchema = z.object({
   localPort: z.number().optional(),
   // Why a port could not be opened, when one could not.
   note: z.string().optional(),
+  // What the address speaks, and what was forwarded.
+  protocol: z.string().default('http'),
+  kind: z.string().default('pod'),
 })
 const forwardsSchema = z.object({ forwards: z.array(forwardSchema) })
 
@@ -1345,6 +1348,7 @@ export const api = {
       port: number
       // Zero or absent means any free port, which is what "Random" sends.
       localPort?: number
+      https?: boolean
       proxy?: boolean
     },
   ) => request(`/api/v1/clusters/${clusterId}/forwards`, forwardSchema, { method: 'POST', body }),

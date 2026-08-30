@@ -48,6 +48,11 @@ type forwardSession struct {
 	// Note explains a fallback, so a reader who expected a port and got a proxy learns
 	// why here rather than by the page misbehaving.
 	Note string `json:"note,omitempty"`
+	// Protocol is what the address speaks: http or https.
+	Protocol string `json:"protocol"`
+	// Kind is what was forwarded, so a list of tunnels says whether this was a pod or
+	// the service in front of one.
+	Kind string `json:"kind"`
 
 	owner   uuid.UUID
 	proxy   *httputil.ReverseProxy
@@ -196,6 +201,10 @@ type startForwardBody struct {
 	// LocalPort is which port to open on Kubby's host. Zero means any free one, which is
 	// what "Random" in the dialog sends.
 	LocalPort int `json:"localPort,omitempty"`
+	// HTTPS says the port behind the tunnel speaks TLS. The tunnel itself carries bytes
+	// either way; this only decides the scheme of the address handed to the browser, and
+	// getting it wrong is a page that will not load.
+	HTTPS bool `json:"https,omitempty"`
 	// Proxy asks for the authenticated route instead of a port of its own.
 	Proxy bool `json:"proxy,omitempty"`
 }
@@ -264,6 +273,11 @@ func (h *resourceHandlers) newForwardSession(r *http.Request, c *store.Cluster, 
 		transport.CloseIdleConnections()
 	}()
 
+	scheme := "http"
+	if body.HTTPS {
+		scheme = "https"
+	}
+
 	prefix := "/api/v1/forward/" + id
 	session := &forwardSession{
 		ID:        id,
@@ -275,6 +289,8 @@ func (h *resourceHandlers) newForwardSession(r *http.Request, c *store.Cluster, 
 		Port:      target.Port,
 		URL:       prefix + "/",
 		Mode:      forwardModeProxy,
+		Protocol:  scheme,
+		Kind:      kindOf(body.Type),
 		StartedAt: time.Now().UTC(),
 		owner:     user.ID,
 		touched:   time.Now().UTC(),
@@ -298,7 +314,7 @@ func (h *resourceHandlers) newForwardSession(r *http.Request, c *store.Cluster, 
 			session.local = local
 			session.LocalPort = local.Port
 			session.Mode = forwardModePort
-			session.URL = fmt.Sprintf("http://%s:%d/", h.forwardHost(r), local.Port)
+			session.URL = fmt.Sprintf("%s://%s:%d/", scheme, h.forwardHost(r), local.Port)
 		} else {
 			session.Note = "No local port could be opened, so this is proxied through Kubby: " + err.Error()
 		}
@@ -415,4 +431,16 @@ func (h *resourceHandlers) serveForward(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Security-Policy", sandboxPolicy)
 
 	session.proxy.ServeHTTP(w, r)
+}
+
+// kindOf names what was forwarded in the words the list uses.
+func kindOf(typeKey string) string {
+	if typeKey == "" {
+		return "pod"
+	}
+	kind := typeKey
+	if _, after, found := strings.Cut(typeKey, "/"); found {
+		kind = after
+	}
+	return strings.TrimSuffix(kind, "s")
 }
