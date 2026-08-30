@@ -34,8 +34,8 @@ LDFLAGS    := -s -w \
 #   REGISTRY        where the BASE images are pulled from (ADR-027: mirror, proxy cache)
 #   IMAGE_REGISTRY  where the built image is TAGGED and PUSHED
 #
-#   make release VERSION=0.12.0 IMAGE_REGISTRY=localhost:5000
-#   make release VERSION=0.12.0 IMAGE_REGISTRY=docker.io/erolbeyaz
+#   make release VERSION=0.13.0 IMAGE_REGISTRY=localhost:5000
+#   make release VERSION=0.13.0 IMAGE_REGISTRY=docker.io/erolbeyaz
 #   make docker  REGISTRY=my-mirror.local          # build through a mirror
 #
 # Credentials are never stored here — authenticate with `docker login`.
@@ -245,7 +245,7 @@ registry-list: ## Show what the local registry holds
 
 .PHONY: release
 release: ## Build a versioned image and push it. VERSION is required.
-	@test "$(VERSION)" != "dev" || (echo "Set a version: make release VERSION=0.12.0"; exit 1)
+	@test "$(VERSION)" != "dev" || (echo "Set a version: make release VERSION=0.13.0"; exit 1)
 	@echo "==> building $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(VERSION) ($(COMMIT_SHA))"
 	docker build \
 		--build-arg REGISTRY=$(REGISTRY) \
@@ -265,7 +265,7 @@ release: ## Build a versioned image and push it. VERSION is required.
 
 .PHONY: tag
 tag: ## Tag the current commit as a release. VERSION is required.
-	@test "$(VERSION)" != "dev" || (echo "Set a version: make tag VERSION=0.12.0"; exit 1)
+	@test "$(VERSION)" != "dev" || (echo "Set a version: make tag VERSION=0.13.0"; exit 1)
 	@# A tag on a dirty tree points at a commit that does not contain what was built.
 	@test -z "$$(git status --porcelain)" || \
 		(echo "The working tree has uncommitted changes. Commit them before tagging."; \

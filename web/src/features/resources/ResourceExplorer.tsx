@@ -26,6 +26,7 @@ import { ShellPane } from '@/features/terminal/ShellPane'
 import { TerminalPane } from '@/features/terminal/TerminalPane'
 import { nodeShellPath } from '@/lib/exec-stream'
 
+import { BulkScaleDialog } from './BulkScaleDialog'
 import { PortForwardDialog } from './PortForwardDialog'
 import { PortForwards } from './PortForwards'
 
@@ -84,6 +85,9 @@ export function ResourceExplorer({
   const [scaling, setScaling] = useState<ResourceRow | null>(null)
   const [draining, setDraining] = useState<string | null>(null)
   const [forwarding, setForwarding] = useState<ResourceRow | null>(null)
+  // Apart from `scaling`, which is one row from its own menu. A selection is a different
+  // act with a different dialog: it can restore each workload to its own count.
+  const [scalingMany, setScalingMany] = useState<ResourceRow[] | null>(null)
   // Open tunnels, keyed by the tab showing them. The session lives on the server; this is
   // only what the tab needs to render it.
   // A write sets off a short window of close attention, so what the cluster does next is
@@ -398,6 +402,7 @@ export function ResourceExplorer({
                 canWrite={canManage}
                 onCreate={() => setDock((current) => openCreateTab(current, cluster.id, location.typeKey))}
                 onDeleteSelected={openDelete}
+                onScaleSelected={setScalingMany}
                 live={live}
               />
 
@@ -519,6 +524,17 @@ export function ResourceExplorer({
           row={scaling}
           onChanged={watchForChanges}
           onClose={() => setScaling(null)}
+        />
+      )}
+
+      {scalingMany && scalingMany.length > 0 && (
+        <BulkScaleDialog
+          clusterId={cluster.id}
+          typeKey={location.typeKey}
+          kind={kind}
+          rows={scalingMany}
+          onChanged={() => setSelection(new Set())}
+          onClose={() => setScalingMany(null)}
         />
       )}
 

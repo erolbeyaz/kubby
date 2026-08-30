@@ -56,6 +56,7 @@ interface Overrides {
   selection?: Set<string>
   onSelectionChange?: (next: Set<string>) => void
   onDeleteSelected?: (rows: ResourceRow[]) => void
+  onScaleSelected?: (rows: ResourceRow[]) => void
   canWrite?: boolean
 }
 
@@ -81,6 +82,7 @@ function renderTable(onOpen = vi.fn(), onContextMenu = vi.fn(), overrides: Overr
         canWrite={overrides.canWrite ?? true}
         onCreate={() => undefined}
         onDeleteSelected={overrides.onDeleteSelected ?? (() => undefined)}
+        onScaleSelected={overrides.onScaleSelected ?? (() => undefined)}
         live={false}
       />
     </QueryClientProvider>,

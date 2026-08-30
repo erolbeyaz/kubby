@@ -4,9 +4,9 @@ description: Browser-based multi-cluster Kubernetes management and observation
 type: application
 
 # The chart's own version, bumped when the chart changes.
-version: 0.12.0
+version: 0.13.0
 # The Kubby release this chart defaults to. Overridden with image.tag.
-appVersion: "0.12.0"
+appVersion: "0.13.0"
 
 keywords: [kubernetes, management, observability, multi-cluster]
 home: https://github.com/erolbeyaz/kubby

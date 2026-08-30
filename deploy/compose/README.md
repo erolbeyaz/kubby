@@ -117,7 +117,7 @@ make registry-list        # içinde ne var
 ### Sürüm yayınlama
 
 ```bash
-make release VERSION=0.12.0 IMAGE_REGISTRY=localhost:5000
+make release VERSION=0.13.0 IMAGE_REGISTRY=localhost:5000
 ```
 
 Bu tek komut: derler, **imajı doğrular** (`kubectl`/`helm` sürümleri, uid 65532, kabuk
@@ -132,7 +132,7 @@ Docker Hub'a yayınlamak da aynı:
 
 ```bash
 docker login
-make release VERSION=0.12.0 IMAGE_REGISTRY=docker.io/<kullanıcı>
+make release VERSION=0.13.0 IMAGE_REGISTRY=docker.io/<kullanıcı>
 ```
 
 `latest` etiketi **bilerek üretilmiyor** — hangi sürümün çalıştığını söyleyemez ve geri
@@ -153,8 +153,8 @@ curl -s http://localhost:8080/version
 docker compose exec -T postgres pg_dump -U kubby kubby | gzip > kubby-$(date +%F).sql.gz
 
 # 3. Yeni sürümü yayınla, sonra .env'de etiketi yükselt
-#    make release VERSION=0.12.0 IMAGE_REGISTRY=localhost:5000
-#    KUBBY_IMAGE=localhost:5000/kubby:0.12.0
+#    make release VERSION=0.13.0 IMAGE_REGISTRY=localhost:5000
+#    KUBBY_IMAGE=localhost:5000/kubby:0.13.0
 
 # 4. Yeni imajı çek ve değiştir
 docker compose pull kubby

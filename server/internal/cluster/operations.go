@@ -22,15 +22,100 @@ import (
 // restart from Kubby and one from kubectl are the same event to everything downstream.
 const restartAnnotation = "kubectl.kubernetes.io/restartedAt"
 
+// What a workload ran before Kubby last scaled it, and what it was scaled to.
+//
+// On the object rather than in Kubby, because the number has to survive a restart, a
+// different reader, and Kubby not being there at all — and because it is then visible in
+// the YAML rather than being a fact only this tool knows.
+const (
+	scaledFromAnnotation = "kubby.io/scaled-from"
+	scaledToAnnotation   = "kubby.io/scaled-to"
+)
+
 // Scale sets a workload's replica count.
 func (s *Service) Scale(ctx context.Context, cluster *store.Cluster, req WriteRequest, replicas int32, impersonate *ImpersonationConfig) error {
 	if replicas < 0 {
 		return fmt.Errorf("%w: replicas cannot be negative", ErrResourceNotFound)
 	}
 
-	patch := []byte(fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas))
-	_, err := s.Patch(ctx, cluster, req, patch, impersonate)
+	// What it was is written onto the object before it is changed, so bringing a set of
+	// workloads back up does not mean remembering what each one ran. Kubernetes keeps no
+	// such record, and a drill that scales twenty deployments to zero has no other way
+	// to restore twenty different numbers. Failing to read the current count is not fatal:
+	// the worst it costs is that record.
+	previous, err := s.currentReplicas(ctx, cluster, req, impersonate)
+	if err != nil {
+		previous = 0
+	}
+
+	_, err = s.Patch(ctx, cluster, req, scalePatch(previous, replicas), impersonate)
 	return err
+}
+
+// scalePatch sets the count and records what it was. A previous of zero records nothing:
+// a second scale-to-zero must not overwrite the count the first one saved.
+func scalePatch(previous int64, replicas int32) []byte {
+	annotations := map[string]string{scaledToAnnotation: strconv.Itoa(int(replicas))}
+	if previous > 0 {
+		annotations[scaledFromAnnotation] = strconv.FormatInt(previous, 10)
+	}
+	patch, _ := json.Marshal(map[string]any{
+		"metadata": map[string]any{"annotations": annotations},
+		"spec":     map[string]any{"replicas": replicas},
+	})
+	return patch
+}
+
+// RestoreScale puts a workload back to what it ran before Kubby scaled it.
+//
+// Reports what it restored to, because "back to normal" is a number the reader wants to
+// see rather than take on trust.
+func (s *Service) RestoreScale(ctx context.Context, cluster *store.Cluster, req WriteRequest, impersonate *ImpersonationConfig) (int32, error) {
+	object, err := s.Get(ctx, cluster, req.Type, req.Namespace, req.Name, impersonate)
+	if err != nil {
+		return 0, err
+	}
+
+	replicas, err := recordedCount(object.GetAnnotations(), req.Namespace+"/"+req.Name)
+	if err != nil {
+		return 0, err
+	}
+
+	patch := []byte(fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas))
+	if _, err := s.Patch(ctx, cluster, req, patch, impersonate); err != nil {
+		return 0, err
+	}
+	return replicas, nil
+}
+
+// recordedCount reads back what scalePatch wrote.
+func recordedCount(annotations map[string]string, what string) (int32, error) {
+	previous, ok := annotations[scaledFromAnnotation]
+	if !ok {
+		return 0, fmt.Errorf("%w: nothing recorded to restore %s to — it has not been scaled from here",
+			ErrRequestRejected, what)
+	}
+
+	replicas, err := strconv.Atoi(previous)
+	if err != nil || replicas < 0 {
+		return 0, fmt.Errorf("%w: %s on %s holds %q, which is not a replica count",
+			ErrRequestRejected, scaledFromAnnotation, what, previous)
+	}
+	return int32(replicas), nil
+}
+
+// currentReplicas reads what a workload runs now. A failure is not fatal to a scale: the
+// worst it costs is the record of where it came from.
+func (s *Service) currentReplicas(ctx context.Context, cluster *store.Cluster, req WriteRequest, impersonate *ImpersonationConfig) (int64, error) {
+	object, err := s.Get(ctx, cluster, req.Type, req.Namespace, req.Name, impersonate)
+	if err != nil {
+		return 0, err
+	}
+	replicas, found, err := unstructured.NestedInt64(object.Object, "spec", "replicas")
+	if err != nil || !found {
+		return 0, fmt.Errorf("no replica count on %s/%s", req.Namespace, req.Name)
+	}
+	return replicas, nil
 }
 
 // Restart rolls a workload by stamping its pod template, which is what kubectl does.

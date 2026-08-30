@@ -5,6 +5,27 @@ sürümler kırıcı değişiklik içerebilir.
 
 ---
 
+## 0.13.0 — 2026-08-30
+
+Seçili workload'ları topluca ölçekleme — DR tatbikatı için.
+
+### Toplu ölçekleme
+
+- Deployment, StatefulSet ve ReplicaSet listelerinde `−` ve `+` düğmelerinin sağında
+  **SCALE** düğmesi. Seçilenlerin hepsi tek diyalogdan bir sayıya çekiliyor (ADR-152)
+- **Restore previous**: Kubby ölçeklemeden önce mevcut sayıyı nesnenin üzerine
+  `kubby.io/scaled-from` olarak yazıyor, geri alma her workload'ı **kendi** eski sayısına
+  döndürüyor. Kubernetes böyle bir kayıt tutmadığı için, sıfıra çekilen yirmi
+  deployment'ın yirmi farklı sayıya dönmesinin başka yolu yok
+- İkinci kez sıfıra çekmek kaydı bozmuyor — aksi hâlde tatbikat, geri dönüşte hiçbir şey
+  ayakta olmayan bir cluster ile biterdi
+- Diyalog her workload'ın **şu an kaç replika koştuğunu** satır satır gösteriyor, sayılar
+  birbirinden farklıysa uyarıyor; sıfır hedefi kırmızı
+- Ölçekleme sırayla yapılıyor ve reddedilen her workload **adıyla** raporlanıyor
+  (ArgoCD sahipliği, RBAC): kısmen biten bir toplu işlem sessizce başarılı sayılmıyor
+
+---
+
 ## 0.12.0 — 2026-08-30
 
 Port-forward artık gerçek bir port açıyor, node ve pod kendi detay ekranlarına kavuştu.

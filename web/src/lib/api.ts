@@ -1448,7 +1448,17 @@ export const api = {
     })
   },
 
-  scale: (clusterId: string, body: { typeKey: string; namespace: string; name: string; replicas: number }) =>
+  scale: (
+    clusterId: string,
+    body: {
+      typeKey: string
+      namespace: string
+      name: string
+      replicas: number
+      /** Put it back to what it ran before Kubby last scaled it, ignoring `replicas`. */
+      restore?: boolean
+    },
+  ) =>
     request(`/api/v1/clusters/${clusterId}/scale`, z.object({ replicas: z.number() }), { method: 'POST', body }),
 
   restart: (clusterId: string, body: { typeKey: string; namespace: string; name: string }) =>

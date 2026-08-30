@@ -18,6 +18,10 @@ type scaleBody struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Replicas  int32  `json:"replicas"`
+	// Restore puts it back to what it ran before Kubby last scaled it, which is the
+	// half of a drill that a single target number cannot express: twenty workloads
+	// taken to zero came from twenty different counts.
+	Restore bool `json:"restore,omitempty"`
 }
 
 func (h *resourceHandlers) scale(w http.ResponseWriter, r *http.Request) {
@@ -37,14 +41,25 @@ func (h *resourceHandlers) scale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := cluster.WriteRequest{Type: resourceType, Namespace: body.Namespace, Name: body.Name, Verb: cluster.VerbPatch}
-	if err := h.svc.Scale(r.Context(), ctx.cluster, req, body.Replicas, impersonationFor(r, ctx.cluster)); err != nil {
+
+	// Restoring is its own request rather than a replica count the client worked out:
+	// the number lives on the object, and a client that had to read it first would race
+	// anything else scaling the same workload.
+	replicas := body.Replicas
+	var err2 error
+	if body.Restore {
+		replicas, err2 = h.svc.RestoreScale(r.Context(), ctx.cluster, req, impersonationFor(r, ctx.cluster))
+	} else {
+		err2 = h.svc.Scale(r.Context(), ctx.cluster, req, body.Replicas, impersonationFor(r, ctx.cluster))
+	}
+	if err2 != nil {
 		h.recordWrite(r, ctx, audit.ActionObjectScaled, body.Namespace, body.Name, audit.ResultError, nil)
-		writeResourceError(w, r, err)
+		writeResourceError(w, r, err2)
 		return
 	}
 
 	h.recordWrite(r, ctx, audit.ActionObjectScaled, body.Namespace, body.Name, audit.ResultSuccess, nil)
-	writeJSON(w, http.StatusOK, map[string]any{"replicas": body.Replicas})
+	writeJSON(w, http.StatusOK, map[string]any{"replicas": replicas})
 }
 
 type targetBody struct {

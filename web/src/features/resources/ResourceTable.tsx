@@ -17,6 +17,10 @@ import { useTicker } from '@/lib/use-ticker'
 import { statusColor, typeKeyForKind } from './statusColor'
 
 // Dense, but a list that has to be squinted at is not dense, it is cramped.
+// The kinds whose replica count is a number someone sets. A DaemonSet's is the cluster's
+// shape rather than a choice, and a Job's is how many times it should run.
+const SCALABLE = new Set(['Deployment', 'StatefulSet', 'ReplicaSet'])
+
 const ROW_HEIGHT = 36
 const NAME_WIDTH = 'minmax(14rem, 2fr)'
 
@@ -50,6 +54,8 @@ interface ResourceTableProps {
   canWrite: boolean
   onCreate: () => void
   onDeleteSelected: (rows: ResourceRow[]) => void
+  /** Scaling a selection at once, which is what a failover drill does. */
+  onScaleSelected: (rows: ResourceRow[]) => void
   /**
    * Refresh every second rather than every fifteen.
    *
@@ -80,6 +86,7 @@ export function ResourceTable({
   canWrite,
   onCreate,
   onDeleteSelected,
+  onScaleSelected,
   live,
 }: ResourceTableProps) {
   const [search, setSearch] = useState('')
@@ -411,6 +418,22 @@ export function ResourceTable({
 
           {canWrite && (
             <div className="pointer-events-none absolute bottom-4 right-4 flex items-center gap-2">
+              {/* Only where replicas are a thing to set. Offered beside delete because a
+                  drill takes a set of workloads to zero and brings them back, and doing
+                  that one row at a time is how one gets missed. */}
+              {SCALABLE.has(kind) && (
+                <FloatingButton
+                  label={
+                    selection.size === 0
+                      ? 'Select rows to scale'
+                      : `Scale ${selection.size} selected`
+                  }
+                  disabled={selection.size === 0}
+                  onClick={() => onScaleSelected(rows.filter((row) => selection.has(keyOf(row))))}
+                  path="M3 10.5V4.5h6M13 5.5v6H7"
+                />
+              )}
+
               <FloatingButton
                 label={
                   selection.size === 0
