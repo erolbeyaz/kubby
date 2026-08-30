@@ -42,7 +42,7 @@ services:
   kubby:
     # The published image, with the version written in. Override KUBBY_IMAGE to run a
     # different tag or your own build without editing this file.
-    image: ${KUBBY_IMAGE:-docker.io/ebeyaz/kubby:0.11.0}
+    image: ${KUBBY_IMAGE:-docker.io/ebeyaz/kubby:0.12.0}
     restart: unless-stopped
     depends_on:
       postgres:

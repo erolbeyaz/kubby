@@ -5,6 +5,52 @@ sürümler kırıcı değişiklik içerebilir.
 
 ---
 
+## 0.12.0 — 2026-08-30
+
+Port-forward artık gerçek bir port açıyor, node ve pod kendi detay ekranlarına kavuştu.
+
+### Port-forward
+
+- **Her forward Kubby'nin makinesinde gerçek bir TCP portu alıyor** (ADR-146). Uygulama
+  kendi origin'ine kendi kökünde kavuşuyor; yol öneki altında mutlak asset yolları
+  Kubby'ye çözülüyor ve tek sayfalık uygulamalar hiç açılmıyordu
+- Varsayılan bind `127.0.0.1` — o port ham TCP, **kimlik doğrulama taşımıyor**
+- Cluster içinde port tarayıcıya ulaşmadığı için **proxy'ye düşüyor** ve ekran hangisini
+  kullandığını yazıyor. Helm: `config.forward.*` + `service.forwardPorts`
+- **Port numarası düğme**: adrese tıkla → yeni sekme, yanındaki düğme → diyalog (yerel
+  port, `https`, Open in Browser). Tünel açıkken düğme kırmızı `STOP` oluyor (ADR-147, 148)
+- **Network → Port Forwarding** ekranı: ad, namespace, kind, pod portu, yerel port,
+  protokol, yaş, durum; satırdan ve sağ tıkla Open/Stop
+- Service de forward edilebiliyor; tünel arkasındaki hazır pod'a çözülüyor
+- **Ingress ve HTTPRoute host'ları bağlantı** oldu; şema `spec.tls`'ten okunuyor.
+  HTTPRoute'un hiç projeksiyonu yoktu — artık host, gateway ve kural sayısı var
+
+### Node ve pod detay ekranları
+
+- **Node** kendi paneline geçti (ADR-149): Metrics · Properties · Capacity · Allocatable ·
+  Pods · Events. Koşullardan yalnızca doğru olanlar; kapasite okunur birimde
+- **Pod** kendi paneline geçti (ADR-151): Metrics · Properties · Pod Volumes · Containers ·
+  Events. Container başına durum, imaj, portlar, env, mount, probe, request/limit ve grafik
+- **Pod başına metrik ucu** — filo yüküne eklenmiyor, panel açılınca iki sorgu
+- Sekme satırında CPU/bellek geçişi; grafikte sağda değer ölçeği, altında 5 dakikalık
+  zaman çizelgesi
+- Her detay panelinin başlığında kopyalama düğmesi
+
+### Düzeltmeler
+
+- **Node kullanımı yanlış ölçülüyordu** (ADR-150). node-exporter makinenin belleğini
+  raporluyor; k3d/minikube node'ları aynı `/proc`'u paylaştığı için **üçü de host'un
+  rakamını** veriyordu — node'lar arasındaki fark tamamen siliniyordu. Artık kubelet'in
+  cAdvisor'ından okunuyor ve `kubectl top node` ile tutuyor
+- Birim yüzde değil çekirdek/bayt; ölçek 1/2/2.5/5 × 10ⁿ adımlarına oturuyor
+- **Ray cluster'sız görünmüyordu** — taze kurulumda hiç gezinme yoktu, dolayısıyla ilk
+  cluster'ı ekleme yolu ekranda çizilmiyordu
+- Watch olayları listenin eklediği alanları taşımıyordu, log işaretleri bir saniyede
+  siliniyordu (ADR-143)
+- Node aksiyon sırası shell/cordon/drain/edit/delete; cordon artık `+` değil
+
+---
+
 ## 0.11.0 — 2026-08-30
 
 Bir pod `Running` ve `Ready` olabiliyor, sağlık probları geçiyor, ama logunda
@@ -221,9 +267,9 @@ Faz 10'un güvenlik geçişinde bulundu:
 
 ```bash
 make test lint                                    # her şey yeşil olmalı
-make release VERSION=0.11.0 IMAGE_REGISTRY=<hedef> # derle, doğrula, push
-make tag VERSION=0.11.0                           # temiz ağaçta etiketle
-git push origin v0.11.0
+make release VERSION=0.12.0 IMAGE_REGISTRY=<hedef> # derle, doğrula, push
+make tag VERSION=0.12.0                           # temiz ağaçta etiketle
+git push origin v0.12.0
 ```
 
 `make release` imajı push etmeden önce doğrular: doğru `kubectl`/`helm` sürümleri, uid
