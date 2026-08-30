@@ -6,7 +6,7 @@ import { Callout } from '@/components/Callout'
 import { EmptyState } from '@/components/EmptyState'
 import { DockLauncher } from '@/components/DockLauncher'
 import { ResizablePanel } from '@/components/ResizablePanel'
-import { ApiError, api, type Cluster, type Forward, type ResourceRow } from '@/lib/api'
+import { ApiError, api, type Cluster, type ResourceRow } from '@/lib/api'
 
 import { Home } from '@/features/home/Home'
 import { ClusterOverview2 } from '@/features/overview2/ClusterOverview2'
@@ -21,13 +21,12 @@ import { LogPane } from '@/features/logs/LogPane'
 import { ClusterPicker } from '@/components/ClusterPicker'
 import { ContextMenu, type MenuItem } from '@/components/ContextMenu'
 import { CreatePane } from '@/features/create/CreatePane'
-import { TAB_ICONS, closeTab, openCreateTab, openTab, tabId, tabLabel, type DockTab } from '@/features/logs/dock'
+import { TAB_ICONS, closeTab, openCreateTab, openTab, tabLabel, type DockTab } from '@/features/logs/dock'
 import { ClusterTerminalPane } from '@/features/terminal/ClusterTerminalPane'
 import { ShellPane } from '@/features/terminal/ShellPane'
 import { TerminalPane } from '@/features/terminal/TerminalPane'
 import { nodeShellPath } from '@/lib/exec-stream'
 
-import { ForwardPane } from './ForwardPane'
 import { PortForwardDialog } from './PortForwardDialog'
 
 import { ActionRunner, type PendingAction } from './ActionRunner'
@@ -87,7 +86,6 @@ export function ResourceExplorer({
   const [forwarding, setForwarding] = useState<ResourceRow | null>(null)
   // Open tunnels, keyed by the tab showing them. The session lives on the server; this is
   // only what the tab needs to render it.
-  const [forwards, setForwards] = useState<Map<string, Forward>>(new Map())
   // A write sets off a short window of close attention, so what the cluster does next is
   // watched rather than discovered fifteen seconds later.
   const [live, setLive] = useState(false)
@@ -476,27 +474,6 @@ export function ResourceExplorer({
                         />
                       )
                     }
-                    if (tab.kind === 'forward') {
-                      const forward = forwards.get(tab.id)
-                      if (!forward) {
-                        return (
-                          <div
-                            className="flex h-full items-center justify-center"
-                            style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
-                          >
-                            This tunnel is closed.
-                          </div>
-                        )
-                      }
-                      return (
-                        <ForwardPane
-                          forward={forward}
-                          onClosed={() =>
-                            setDock((current) => closeTab(current.tabs, tab.id, current.activeId))
-                          }
-                        />
-                      )
-                    }
                     if (tab.kind === 'create' || tab.kind === 'edit') {
                       return (
                         <CreatePane
@@ -564,16 +541,10 @@ export function ResourceExplorer({
           typeKey={location.typeKey}
           kind={kind}
           row={forwarding}
-          onOpened={(forward) => {
-            const tab = {
-              kind: 'forward' as const,
-              clusterId: cluster.id,
-              typeKey: location.typeKey,
-              namespace: forward.namespace,
-              name: `${forward.name}:${forward.port}`,
-            }
-            setForwards((current) => new Map(current).set(tabId(tab), forward))
-            setDock((current) => openTab(current.tabs, tab))
+          onOpened={() => {
+            // Nothing to open here: the tunnel is a browser tab now, and the chip in the
+            // toolbar is where it is stopped.
+            void queryClient.invalidateQueries({ queryKey: ['forwards', cluster.id] })
           }}
           onClose={() => setForwarding(null)}
         />

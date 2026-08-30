@@ -303,7 +303,7 @@ export const columnSchema = z.object({
   key: z.string(),
   label: z.string(),
   mono: z.boolean().optional(),
-  link: z.enum(['namespace', 'owner', 'node']).optional(),
+  link: z.enum(['namespace', 'owner', 'node', 'external']).optional(),
   status: z.boolean().optional(),
 })
 

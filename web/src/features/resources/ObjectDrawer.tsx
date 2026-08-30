@@ -10,6 +10,7 @@ import { toYaml } from '@/lib/yaml'
 
 import { availableActionsFor } from './actions'
 import { containersOf, formatQuantities, podSpecOf, pulledFrom, registryOf, volumesOf } from './containers'
+import { ForwardablePort } from './ForwardablePort'
 import { Relations } from './Relations'
 import { RestartBadge } from './RestartBadge'
 import { SecretKeys } from './SecretKeys'
@@ -128,7 +129,15 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
             moment the panel opens; the fetched object fills in the rest behind it. */}
         {!error && pane === 'summary' && (
           <>
-            <Summary object={data ?? {}} row={row} kind={kind} loading={object.isLoading} onNavigate={onNavigate} />
+            <Summary
+              clusterId={clusterId}
+              typeKey={typeKey}
+              object={data ?? {}}
+              row={row}
+              kind={kind}
+              loading={object.isLoading}
+              onNavigate={onNavigate}
+            />
 
             {kind === 'Secret' && (
               <Group title="Data">
@@ -177,12 +186,16 @@ interface KubeObject {
 }
 
 function Summary({
+  clusterId,
+  typeKey,
   object,
   row,
   kind,
   loading,
   onNavigate,
 }: {
+  clusterId: string
+  typeKey: string
   object: KubeObject
   row: ResourceRow
   kind: string
@@ -309,12 +322,30 @@ function Summary({
         </Group>
       ) : (
         <>
-          <Containers spec={spec} status={status} row={row} kind={kind} init={false} />
+          <Containers
+            clusterId={clusterId}
+            typeKey={typeKey}
+            spec={spec}
+            status={status}
+            row={row}
+            kind={kind}
+            init={false}
+          />
           {/* Init containers get their own section rather than a badge among the rest:
               they ran and exited before anything else started, and reading them beside
               the containers still running invites treating the two as the same thing. */}
-          <Containers spec={spec} status={status} row={row} kind={kind} init />
+          <Containers
+            clusterId={clusterId}
+            typeKey={typeKey}
+            spec={spec}
+            status={status}
+            row={row}
+            kind={kind}
+            init
+          />
           <Volumes spec={spec} kind={kind} />
+          <ServicePorts clusterId={clusterId} typeKey={typeKey} row={row} kind={kind} spec={spec} />
+          <ExternalAddresses row={row} />
         </>
       )}
     </div>
@@ -329,12 +360,16 @@ function Summary({
  * often as of one of its pods.
  */
 function Containers({
+  clusterId,
+  typeKey,
   spec,
   status,
   row,
   kind,
   init,
 }: {
+  clusterId: string
+  typeKey: string
   spec: Record<string, unknown>
   status: Record<string, unknown>
   row: ResourceRow
@@ -399,11 +434,20 @@ function Containers({
 
               {container.ports.length > 0 && (
                 <ContainerField label="Ports">
-                  <span className="font-mono">
-                    {container.ports
-                      .map((port) => `${port.port}/${port.protocol}${port.name ? ` ${port.name}` : ''}`)
-                      .join(' · ')}
-                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {container.ports.map((port) => (
+                      <ForwardablePort
+                        key={`${port.port}/${port.protocol}`}
+                        clusterId={clusterId}
+                        typeKey={typeKey}
+                        namespace={row.namespace ?? ''}
+                        name={row.name}
+                        port={port.port}
+                        protocol={port.protocol}
+                        label={port.name}
+                      />
+                    ))}
+                  </div>
                 </ContainerField>
               )}
 
@@ -453,6 +497,109 @@ function Containers({
                 </div>
               )}
             </div>
+          )
+        })}
+      </div>
+    </Group>
+  )
+}
+
+/**
+ * A service's own ports, each one a click away from being reached.
+ *
+ * A service has no containers, so it never appeared in the block above — and it is the
+ * thing most often forwarded, because it is what the rest of the cluster talks to. The
+ * forward resolves it to a ready pod behind it rather than to the service address, which
+ * is the only way a tunnel can reach it at all.
+ */
+function ServicePorts({
+  clusterId,
+  typeKey,
+  row,
+  kind,
+  spec,
+}: {
+  clusterId: string
+  typeKey: string
+  row: ResourceRow
+  kind: string
+  spec: Record<string, unknown>
+}) {
+  if (kind !== 'Service') return null
+
+  const ports = (Array.isArray(spec.ports) ? (spec.ports as Record<string, unknown>[]) : [])
+    .map((port) => ({
+      port: typeof port.port === 'number' ? port.port : 0,
+      protocol: text(port.protocol) || 'TCP',
+      name: text(port.name),
+      target: text(port.targetPort) || (typeof port.targetPort === 'number' ? String(port.targetPort) : ''),
+    }))
+    .filter((port) => port.port > 0)
+
+  if (ports.length === 0) return null
+
+  return (
+    <Group title={`Ports (${ports.length})`}>
+      <div className="flex flex-col gap-1.5 px-3 py-2">
+        {ports.map((port) => (
+          <div key={`${port.port}/${port.protocol}`} className="flex items-center gap-2">
+            <ForwardablePort
+              clusterId={clusterId}
+              typeKey={typeKey}
+              namespace={row.namespace ?? ''}
+              name={row.name}
+              port={port.port}
+              protocol={port.protocol}
+              label={port.name}
+            />
+            {port.target && (
+              <span style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
+                → {port.target}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </Group>
+  )
+}
+
+/**
+ * Where an ingress or a route can actually be reached.
+ *
+ * The hosts are already projected onto the row with the URL each one resolves to, so
+ * this is the same answer the list gives, in the place someone lands after clicking a
+ * row rather than beside it.
+ */
+function ExternalAddresses({ row }: { row: ResourceRow }) {
+  const hosts = (row.fields['hosts'] ?? '').split(',').filter(Boolean)
+  const urls = (row.fields['hostUrls'] ?? '').split(',')
+  if (hosts.length === 0) return null
+
+  return (
+    <Group title={`Addresses (${hosts.length})`}>
+      <div className="flex flex-col gap-1 px-3 py-2">
+        {hosts.map((host, index) => {
+          const target = urls[index]?.trim()
+          return target ? (
+            <a
+              key={host}
+              href={target}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate font-mono hover:underline"
+              style={{ fontSize: 'var(--text-micro)', color: 'var(--status-info)' }}
+            >
+              {target}
+            </a>
+          ) : (
+            <span
+              key={host}
+              className="truncate font-mono"
+              style={{ fontSize: 'var(--text-micro)', color: 'var(--text-secondary)' }}
+            >
+              {host}
+            </span>
           )
         })}
       </div>

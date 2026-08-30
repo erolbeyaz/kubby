@@ -8,6 +8,8 @@ import { TextInput } from '@/components/Field'
 import { NamespacePicker } from '@/components/NamespacePicker'
 import { VirtualRows } from '@/components/VirtualRows'
 import { ApiError, api, type Column, type ContainerState, type ResourceRow } from '@/lib/api'
+
+import { ActiveForwards } from './ActiveForwards'
 import { formatAbsolute, formatAge, isLiveAge } from '@/lib/time'
 import { useResourceStream } from '@/lib/use-resource-stream'
 import { useTicker } from '@/lib/use-ticker'
@@ -217,6 +219,13 @@ export function ResourceTable({
             style={{ backgroundColor: 'var(--accent)' }}
           />
         )}
+
+        {/* Open tunnels, where they can be stopped. On the toolbar rather than in a pane
+            of their own: a forward lives in a browser tab now, and the only thing left
+            to do here is end it. */}
+        <span className="ml-auto">
+          <ActiveForwards clusterId={clusterId} />
+        </span>
       </header>
 
       {error && (
@@ -495,6 +504,40 @@ function Cell({
             : undefined
         }
       />
+    )
+  }
+
+  // An address outside Kubby. The value is what to show; where to go rides alongside it,
+  // because a host is not a URL until a scheme and a path are decided.
+  if (column.link === 'external') {
+    const urls = (row.fields['hostUrls'] ?? '').split(',')
+    return (
+      <span className="flex min-w-0 gap-1.5">
+        {value.split(',').map((host, index) => {
+          const target = urls[index]?.trim()
+          if (!target) {
+            return (
+              <span key={host} className="truncate font-mono" style={{ color: 'var(--text-secondary)' }}>
+                {host}
+              </span>
+            )
+          }
+          return (
+            <a
+              key={host}
+              href={target}
+              target="_blank"
+              rel="noreferrer"
+              title={target}
+              onClick={(event) => event.stopPropagation()}
+              className="truncate font-mono transition-colors hover:underline"
+              style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--status-info)' }}
+            >
+              {host}
+            </a>
+          )
+        })}
+      </span>
     )
   }
 

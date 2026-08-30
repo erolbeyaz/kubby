@@ -86,3 +86,50 @@ func TestForwardsARealApplication(t *testing.T) {
 		}
 	}
 }
+
+// A service is what the rest of the cluster talks to, so it is what gets forwarded most
+// often. It has no port of its own to dial — the tunnel has to resolve it to a ready pod
+// behind it — which is a different path through the code from forwarding a pod.
+func TestForwardsAServiceThroughAReadyPod(t *testing.T) {
+	namespace := os.Getenv("KUBBY_TEST_FORWARD_NS")
+	name := os.Getenv("KUBBY_TEST_FORWARD_APP")
+	if namespace == "" || name == "" {
+		t.Skip("KUBBY_TEST_FORWARD_NS and KUBBY_TEST_FORWARD_APP are not set")
+	}
+
+	svc, c := seededCluster(t)
+
+	ports, err := svc.ForwardablePorts(context.Background(), c, "services", namespace, name, nil)
+	if err != nil {
+		t.Fatalf("ForwardablePorts: %v", err)
+	}
+	if len(ports) == 0 {
+		t.Fatal("the service declares no forwardable ports")
+	}
+
+	target, err := svc.ResolveForward(context.Background(), c, "services", namespace, name, 80, nil)
+	if err != nil {
+		t.Fatalf("ResolveForward: %v", err)
+	}
+	if target.Pod == name {
+		t.Errorf("the service resolved to itself rather than to a pod behind it: %q", target.Pod)
+	}
+
+	forward, err := svc.ListenForward(context.Background(), c, *target, nil,
+		"127.0.0.1", 0, cluster.PortRange{}, nil, func(err error) { t.Errorf("dial: %v", err) })
+	if err != nil {
+		t.Fatalf("ListenForward: %v", err)
+	}
+	defer forward.Close()
+
+	response, err := (&http.Client{Timeout: 20 * time.Second}).
+		Get(fmt.Sprintf("http://127.0.0.1:%d/", forward.Port))
+	if err != nil {
+		t.Fatalf("GET through the service forward: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	if response.StatusCode != http.StatusOK {
+		t.Errorf("GET / -> %d", response.StatusCode)
+	}
+}

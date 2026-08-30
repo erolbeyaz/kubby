@@ -240,3 +240,93 @@ func TestOnlyPodsCarryContainerStates(t *testing.T) {
 		t.Errorf("a Deployment row carries container states: %+v", row.ContainerStates)
 	}
 }
+
+// An ingress host is an address, and the reason anyone opens that list. Turning it into
+// a link saves retyping what is already on the screen — but only when the scheme and the
+// path are the ones that actually serve.
+func TestIngressHostsCarryTheAddressTheyResolveTo(t *testing.T) {
+	ingress := objectWith("Ingress", map[string]any{
+		"ingressClassName": "nginx",
+		"tls":              []any{map[string]any{"hosts": []any{"secure.example.com"}}},
+		"rules": []any{
+			map[string]any{
+				"host": "secure.example.com",
+				"http": map[string]any{"paths": []any{map[string]any{"path": "/app"}}},
+			},
+			map[string]any{
+				"host": "plain.example.com",
+				"http": map[string]any{"paths": []any{map[string]any{"path": "/"}}},
+			},
+		},
+	})
+
+	fields := cluster.Project("Ingress", ingress, time.Now()).Fields
+
+	if got, want := fields["hosts"], "secure.example.com,plain.example.com"; got != want {
+		t.Errorf("hosts = %q, want %q", got, want)
+	}
+	// The host in spec.tls is https; the one that is not is not.
+	want := "https://secure.example.com/app,http://plain.example.com/"
+	if got := fields["hostUrls"]; got != want {
+		t.Errorf("hostUrls = %q, want %q", got, want)
+	}
+}
+
+// A regex path is a pattern rather than somewhere to go, so the link falls back to the
+// root instead of sending the reader to a literal `/api/(.*)`.
+func TestARegexPathIsNotUsedAsALink(t *testing.T) {
+	ingress := objectWith("Ingress", map[string]any{
+		"rules": []any{map[string]any{
+			"host": "example.com",
+			"http": map[string]any{"paths": []any{map[string]any{"path": "/api/(.*)"}}},
+		}},
+	})
+
+	if got := cluster.Project("Ingress", ingress, time.Now()).Fields["hostUrls"]; got != "http://example.com/" {
+		t.Errorf("hostUrls = %q", got)
+	}
+}
+
+// An HTTPRoute had no projection at all and showed only its age, which says nothing
+// about where it sends traffic or what accepted it.
+func TestHTTPRouteReportsItsHostsAndGateways(t *testing.T) {
+	route := objectWith("HTTPRoute", map[string]any{
+		"hostnames":  []any{"api.example.com", "www.example.com"},
+		"parentRefs": []any{map[string]any{"name": "public-gateway"}},
+		"rules":      []any{map[string]any{}, map[string]any{}},
+	})
+
+	fields := cluster.Project("HTTPRoute", route, time.Now()).Fields
+
+	if got, want := fields["hosts"], "api.example.com,www.example.com"; got != want {
+		t.Errorf("hosts = %q, want %q", got, want)
+	}
+	if got, want := fields["hostUrls"], "https://api.example.com/,https://www.example.com/"; got != want {
+		t.Errorf("hostUrls = %q, want %q", got, want)
+	}
+	if got := fields["gateways"]; got != "public-gateway" {
+		t.Errorf("gateways = %q", got)
+	}
+	if got := fields["rules"]; got != "2" {
+		t.Errorf("rules = %q", got)
+	}
+
+	if !hasColumn("HTTPRoute", "hosts") {
+		t.Error("the HTTPRoute list has no hosts column")
+	}
+}
+
+// The column has to say that its value goes somewhere, or the client renders text.
+func TestHostColumnsAreMarkedAsLinks(t *testing.T) {
+	for _, kind := range []string{"Ingress", "HTTPRoute"} {
+		var linked bool
+		for _, column := range cluster.ColumnsFor(kind) {
+			if column.Key == "hosts" && column.Link == cluster.LinkExternal {
+				linked = true
+			}
+		}
+		if !linked {
+			t.Errorf("%s hosts is not an external link", kind)
+		}
+	}
+}

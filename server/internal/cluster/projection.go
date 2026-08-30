@@ -75,6 +75,9 @@ const (
 	LinkNamespace Link = "namespace"
 	LinkOwner     Link = "owner"
 	LinkNode      Link = "node"
+	// LinkExternal is an address outside Kubby — an ingress host, a route hostname. The
+	// value is what to show; the URL to open rides alongside it in a field of its own.
+	LinkExternal Link = "external"
 )
 
 // Column describes one column of a list, so the client renders what the server decided
@@ -303,26 +306,19 @@ var projectors = map[string]projector{
 	"Ingress": {
 		columns: []Column{
 			{Key: "class", Label: "Class"},
-			{Key: "hosts", Label: "Hosts", Mono: true},
+			{Key: "hosts", Label: "Hosts", Mono: true, Link: LinkExternal},
 			{Key: "age", Label: "Age", Mono: true},
 		},
-		project: func(obj *unstructured.Unstructured) (map[string]string, string) {
-			rules, _, _ := unstructured.NestedSlice(obj.Object, "spec", "rules")
-			hosts := make([]string, 0, len(rules))
-			for _, raw := range rules {
-				rule, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				if host, _, _ := unstructured.NestedString(rule, "host"); host != "" {
-					hosts = append(hosts, host)
-				}
-			}
-			return map[string]string{
-				"class": nestedString(obj, "spec", "ingressClassName"),
-				"hosts": strings.Join(hosts, ","),
-			}, ""
+		project: projectIngress,
+	},
+	"HTTPRoute": {
+		columns: []Column{
+			{Key: "hosts", Label: "Hosts", Mono: true, Link: LinkExternal},
+			{Key: "gateways", Label: "Gateways", Mono: true},
+			{Key: "rules", Label: "Rules", Mono: true},
+			{Key: "age", Label: "Age", Mono: true},
 		},
+		project: projectHTTPRoute,
 	},
 	"PersistentVolumeClaim": {
 		columns: []Column{
@@ -866,4 +862,113 @@ func nestedBoolIn(obj map[string]any, path ...string) bool {
 func nestedIntIn(obj map[string]any, path ...string) int64 {
 	value, _, _ := unstructured.NestedInt64(obj, path...)
 	return value
+}
+
+// projectIngress reports where an ingress can be reached, not only what it is called.
+//
+// The hosts are the reason anyone opens this list, and they are addresses: turning them
+// into links saves the reader retyping what is already on screen.
+func projectIngress(obj *unstructured.Unstructured) (map[string]string, string) {
+	// A host named in spec.tls is served over https. Reading it is the difference
+	// between a link that works and one that lands on the wrong scheme.
+	secured := map[string]bool{}
+	tls, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tls")
+	for _, raw := range tls {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		hosts, _, _ := unstructured.NestedStringSlice(entry, "hosts")
+		for _, host := range hosts {
+			secured[host] = true
+		}
+	}
+
+	rules, _, _ := unstructured.NestedSlice(obj.Object, "spec", "rules")
+	hosts := make([]string, 0, len(rules))
+	urls := make([]string, 0, len(rules))
+	for _, raw := range rules {
+		rule, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		host, _, _ := unstructured.NestedString(rule, "host")
+		if host == "" {
+			continue
+		}
+		hosts = append(hosts, host)
+		urls = append(urls, externalURL(host, secured[host], firstPath(rule)))
+	}
+
+	return map[string]string{
+		"class":    nestedString(obj, "spec", "ingressClassName"),
+		"hosts":    strings.Join(hosts, ","),
+		"hostUrls": strings.Join(urls, ","),
+	}, ""
+}
+
+// projectHTTPRoute does the same for the Gateway API's successor to an ingress.
+//
+// The scheme is assumed to be https. A route does not carry one — its gateway's listener
+// does — and reading that would be a second request per row for a guess that is right
+// almost always.
+func projectHTTPRoute(obj *unstructured.Unstructured) (map[string]string, string) {
+	hostnames, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "hostnames")
+
+	urls := make([]string, 0, len(hostnames))
+	for _, host := range hostnames {
+		urls = append(urls, externalURL(host, true, ""))
+	}
+
+	parents, _, _ := unstructured.NestedSlice(obj.Object, "spec", "parentRefs")
+	gateways := make([]string, 0, len(parents))
+	for _, raw := range parents {
+		parent, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _, _ := unstructured.NestedString(parent, "name"); name != "" {
+			gateways = append(gateways, name)
+		}
+	}
+
+	rules, _, _ := unstructured.NestedSlice(obj.Object, "spec", "rules")
+
+	return map[string]string{
+		"hosts":    strings.Join(hostnames, ","),
+		"hostUrls": strings.Join(urls, ","),
+		"gateways": strings.Join(gateways, ","),
+		"rules":    fmt.Sprint(len(rules)),
+	}, ""
+}
+
+// firstPath is where the rule starts serving, so a link lands somewhere that exists
+// rather than on a root the ingress may not route.
+func firstPath(rule map[string]any) string {
+	paths, _, _ := unstructured.NestedSlice(rule, "http", "paths")
+	for _, raw := range paths {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if path, _, _ := unstructured.NestedString(entry, "path"); path != "" {
+			// A regex path is a pattern, not somewhere to go.
+			if strings.ContainsAny(path, "()[]*?|") {
+				return ""
+			}
+			return path
+		}
+	}
+	return ""
+}
+
+func externalURL(host string, secure bool, path string) string {
+	scheme := "http"
+	if secure {
+		scheme = "https"
+	}
+	if path == "" {
+		path = "/"
+	}
+	return scheme + "://" + host + path
 }

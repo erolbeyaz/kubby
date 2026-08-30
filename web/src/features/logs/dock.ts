@@ -1,7 +1,7 @@
 /** One thing the dock is showing, pinned to the object it was opened for. */
 export interface DockTab {
   id: string
-  kind: 'logs' | 'describe' | 'create' | 'edit' | 'shell' | 'node-shell' | 'forward' | 'terminal'
+  kind: 'logs' | 'describe' | 'create' | 'edit' | 'shell' | 'node-shell' | 'terminal'
   clusterId: string
   typeKey: string
   namespace: string
@@ -19,7 +19,6 @@ const VERBS: Record<DockTab['kind'], string> = {
   edit: 'Edit',
   shell: 'Shell',
   'node-shell': 'Node shell',
-  forward: 'Forward',
   terminal: 'Terminal',
 }
 
@@ -45,7 +44,6 @@ export const TAB_ICONS: Record<DockTab['kind'], string> = {
   edit: 'M11 1.8l3.2 3.2-9 9H2v-3.2z',
   shell: 'M2.6 3.4l4.2 4.6-4.2 4.6M8.4 12.6h5',
   'node-shell': 'M2 3.4h12v9.2H2zM4.4 6.2l2.2 1.8-2.2 1.8M8.6 9.8h3.2',
-  forward: 'M2 8h8.4M7.4 4.6L10.8 8l-3.4 3.4M13 3.2v9.6',
   terminal: 'M1.8 2.6h12.4v10.8H1.8zM4.2 6l2.4 2-2.4 2M8.4 10h3.4',
 }
 
