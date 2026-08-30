@@ -270,9 +270,37 @@ tag: ## Tag the current commit as a release. VERSION is required.
 	@test -z "$$(git status --porcelain)" || \
 		(echo "The working tree has uncommitted changes. Commit them before tagging."; \
 		 git status --short; exit 1)
-	@git tag -a v$(VERSION) -m "Kubby v$(VERSION)"
-	@echo "Tagged v$(VERSION) at $$(git rev-parse --short HEAD)"
+	@# Already tagged at this commit is not a failure: `ship` runs `tag` and a push that
+	@# fails halfway must be re-runnable without hand-unpicking the tag it just made.
+	@# `^{commit}` dereferences it: an annotated tag's own sha is the tag object's, never
+	@# the commit's, so comparing without this never matches and always re-tags.
+	@if [ "$$(git rev-parse -q --verify refs/tags/v$(VERSION)^{commit} 2>/dev/null)" = "$$(git rev-parse HEAD)" ]; then \
+		echo "v$(VERSION) already tags this commit."; \
+	else \
+		git tag -a v$(VERSION) -m "Kubby v$(VERSION)"; \
+		echo "Tagged v$(VERSION) at $$(git rev-parse --short HEAD)"; \
+	fi
 	@echo "Push it when you are ready:  git push origin v$(VERSION)"
+
+.PHONY: ship
+ship: ## Tag, push to GitHub and publish the image — all under one version. VERSION required.
+	@# One command because the two halves must not drift: an image on Docker Hub whose
+	@# source is not on GitHub is one nobody can read, and a tag with no image behind it
+	@# is one nobody can run. Both carry the same version or neither goes.
+	@test "$(VERSION)" != "dev" || (echo "Set a version: make ship VERSION=0.13.0"; exit 1)
+	@# Without a namespace the push is to `docker.io/kubby`, which nobody owns; the
+	@# registry answers with a denial about access rather than about the name.
+	@case "$(IMAGE_REGISTRY)" in */*) ;; *) \
+		echo "IMAGE_REGISTRY needs a namespace, e.g. make ship VERSION=$(VERSION) IMAGE_REGISTRY=docker.io/<user>"; \
+		exit 1 ;; \
+	esac
+	@$(MAKE) --no-print-directory tag VERSION=$(VERSION)
+	@echo "==> pushing the branch and the tag"
+	git push origin HEAD
+	git push origin v$(VERSION)
+	@$(MAKE) --no-print-directory release VERSION=$(VERSION)
+	@echo
+	@echo "Shipped v$(VERSION): $(IMAGE_REGISTRY)/$(IMAGE_REPO):$(VERSION)"
 
 .PHONY: smoke-audit
 smoke-audit: ## Verify the audit sinks against real Elasticsearch and Loki
