@@ -7,8 +7,14 @@ import { ApiError, api, type ResourceRow } from '@/lib/api'
 
 import { BulkScaleDialog } from './BulkScaleDialog'
 
-function row(name: string, ready: string): ResourceRow {
-  return { name, namespace: 'payments', age: '1d', createdAt: '', fields: { ready } }
+function row(name: string, ready: string, scaledFrom?: string): ResourceRow {
+  return {
+    name,
+    namespace: 'payments',
+    age: '1d',
+    createdAt: '',
+    fields: { ready, ...(scaledFrom === undefined ? {} : { scaledFrom }) },
+  }
 }
 
 function show(rows = [row('api', '3/3'), row('worker', '5/5')]) {
@@ -58,7 +64,7 @@ describe('BulkScaleDialog', () => {
   // Bringing a set back is not one number: they did not all run the same count, and
   // Kubernetes keeps no record of what they ran.
   it('restores each workload to its own recorded count', async () => {
-    const { scale } = show()
+    const { scale } = show([row('api', '0/0', '3'), row('worker', '0/0', '5')])
 
     await userEvent.click(screen.getByRole('button', { name: 'Restore previous' }))
     await userEvent.click(screen.getByRole('button', { name: 'Restore' }))
@@ -94,5 +100,42 @@ describe('BulkScaleDialog', () => {
     await waitFor(() => expect(scale).toHaveBeenCalledTimes(2))
     expect(await screen.findByText(/payments\/worker: is owned by ArgoCD/)).toBeInTheDocument()
     expect(closed).not.toHaveBeenCalled()
+  })
+})
+
+describe('BulkScaleDialog, restoring', () => {
+  // "now 0" on every row says nothing about where they are going. The whole reason to
+  // press Restore is the number on the other side of the arrow.
+  it('shows each workload its own recorded count as the target', async () => {
+    show([row('api', '0/0', '3'), row('worker', '0/0', '5')])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restore previous' }))
+
+    expect(screen.getByText('→ 3')).toBeInTheDocument()
+    expect(screen.getByText('→ 5')).toBeInTheDocument()
+  })
+
+  it('marks a workload Kubby never scaled instead of inventing a count for it', async () => {
+    show([row('api', '0/0', '3'), row('worker', '2/2')])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restore previous' }))
+
+    expect(screen.getByText('no record')).toBeInTheDocument()
+    expect(screen.getByText(/1 of 2 were not scaled from here/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeEnabled()
+  })
+
+  it('will not run a restore when nothing in the selection has a record', async () => {
+    show([row('api', '2/2'), row('worker', '2/2')])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restore previous' }))
+
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeDisabled()
+  })
+
+  it('shows the target in set mode too', () => {
+    show([row('api', '3/3'), row('worker', '5/5')])
+
+    expect(screen.getAllByText('→ 0')).toHaveLength(2)
   })
 })

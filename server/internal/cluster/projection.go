@@ -181,6 +181,7 @@ var projectors = map[string]projector{
 				"available": fmt.Sprint(nestedInt(obj, "status", "availableReplicas")),
 			}
 			withImages(fields, obj, "spec", "template", "spec")
+			withScaleRecord(fields, obj)
 			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
@@ -196,6 +197,7 @@ var projectors = map[string]projector{
 
 			fields := map[string]string{"ready": fmt.Sprintf("%d/%d", ready, desired)}
 			withImages(fields, obj, "spec", "template", "spec")
+			withScaleRecord(fields, obj)
 			return withTrouble(fields, k8s.WorkloadTrouble(obj, desired, ready))
 		},
 	},
@@ -236,6 +238,7 @@ var projectors = map[string]projector{
 				"controlledBy":     owner,
 				"controlledByKind": ownerKind,
 			}
+			withScaleRecord(fields, obj)
 			return withImages(fields, obj, "spec", "template", "spec"), ""
 		},
 	},
@@ -467,6 +470,20 @@ func projectPod(obj *unstructured.Unstructured) (map[string]string, string) {
 		}
 	}
 	return fields, severity
+}
+
+// withScaleRecord carries what a workload ran before Kubby last scaled it, so a restore
+// can say what it is about to put back rather than only what is running now. Not a
+// column: it has nothing to say until someone opens the scale dialog.
+func withScaleRecord(fields map[string]string, obj *unstructured.Unstructured) map[string]string {
+	previous, ok := obj.GetAnnotations()[scaledFromAnnotation]
+	if !ok {
+		return fields
+	}
+	if count, err := strconv.Atoi(previous); err == nil && count >= 0 {
+		fields["scaledFrom"] = previous
+	}
+	return fields
 }
 
 // withTrouble folds a reading of what is wrong into a row's fields.

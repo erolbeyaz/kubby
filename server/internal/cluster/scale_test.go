@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func decodePatch(t *testing.T, patch []byte) (map[string]string, int64) {
@@ -79,6 +81,37 @@ func TestRecordedCount(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Errorf("got %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// The dialog cannot show what it is about to restore a workload to unless the row carries
+// it, and the row only carries what the projection puts there.
+func TestScalableRowsCarryTheRecordedCount(t *testing.T) {
+	for _, kind := range []string{"Deployment", "StatefulSet", "ReplicaSet"} {
+		t.Run(kind, func(t *testing.T) {
+			obj := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "apps/v1", "kind": kind,
+				"metadata": map[string]any{
+					"name": "shop-web", "namespace": "storefront",
+					"annotations": map[string]any{scaledFromAnnotation: "4", scaledToAnnotation: "0"},
+				},
+				"spec":   map[string]any{"replicas": int64(0)},
+				"status": map[string]any{"readyReplicas": int64(0)},
+			}}
+
+			fields, _ := projectors[kind].project(obj)
+			if fields["scaledFrom"] != "4" {
+				t.Errorf("scaledFrom = %q, want \"4\"", fields["scaledFrom"])
+			}
+
+			// One Kubby has never scaled must arrive with nothing rather than a zero the
+			// dialog would show as a real target.
+			obj.SetAnnotations(map[string]string{})
+			fields, _ = projectors[kind].project(obj)
+			if recorded, present := fields["scaledFrom"]; present {
+				t.Errorf("a workload never scaled from here reported %q", recorded)
 			}
 		})
 	}

@@ -19,8 +19,10 @@ Seçili workload'ları topluca ölçekleme — DR tatbikatı için.
   deployment'ın yirmi farklı sayıya dönmesinin başka yolu yok
 - İkinci kez sıfıra çekmek kaydı bozmuyor — aksi hâlde tatbikat, geri dönüşte hiçbir şey
   ayakta olmayan bir cluster ile biterdi
-- Diyalog her workload'ın **şu an kaç replika koştuğunu** satır satır gösteriyor, sayılar
-  birbirinden farklıysa uyarıyor; sıfır hedefi kırmızı
+- Diyalog her workload'ın **şu an kaç replika koştuğunu ve nereye gideceğini** satır
+  satır gösteriyor (`now 0 → 3`). Kubby'nin hiç ölçeklemediği bir workload `no record`
+  diye işaretleniyor — tahmin edilmiş bir sayı yerine. Seçimde kayıtlı hiçbir şey yoksa
+  Restore düğmesi çalışmıyor. Sayılar birbirinden farklıysa uyarı; sıfır hedefi kırmızı
 - Ölçekleme sırayla yapılıyor ve reddedilen her workload **adıyla** raporlanıyor
   (ArgoCD sahipliği, RBAC): kısmen biten bir toplu işlem sessizce başarılı sayılmıyor
 
