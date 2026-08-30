@@ -2,7 +2,10 @@ package httpapi
 
 import (
 	"errors"
+	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -10,6 +13,7 @@ import (
 
 	"github.com/erolbeyaz/kubby/internal/audit"
 	"github.com/erolbeyaz/kubby/internal/cluster"
+	"github.com/erolbeyaz/kubby/internal/config"
 	"github.com/erolbeyaz/kubby/internal/health"
 	"github.com/erolbeyaz/kubby/internal/rbac"
 	"github.com/erolbeyaz/kubby/internal/settings"
@@ -43,6 +47,36 @@ type resourceHandlers struct {
 	// logs holds what each cluster's own logs are saying, swept in the background so a
 	// list does not wait on a second system to draw.
 	logs *cluster.LogSweeper
+	// forwardCfg decides whether a port-forward gets a port of its own and where it
+	// binds. Empty Bind means every forward goes through the authenticated proxy.
+	forwardCfg config.ForwardConfig
+	// publicURL is how the browser reaches Kubby, which is also how it will reach a
+	// port Kubby opened — the two are on the same host by definition.
+	publicURL *url.URL
+	logger    *slog.Logger
+}
+
+// forwardHost is the name to hand the browser for a local port.
+//
+// Configured first, then the host Kubby itself was reached on: a reader who typed
+// `kubby.internal:8080` reaches a forward at `kubby.internal:<port>`, and one on
+// localhost reaches it on localhost. Falling back to the request's own Host rather than
+// the configured public URL matters when both are true at once — a developer reaching
+// the same Kubby by two names should get back the name they used.
+func (h *resourceHandlers) forwardHost(r *http.Request) string {
+	if configured := strings.TrimSpace(h.forwardCfg.Host); configured != "" {
+		return configured
+	}
+	if host, _, err := net.SplitHostPort(r.Host); err == nil && host != "" {
+		return host
+	}
+	if r.Host != "" {
+		return r.Host
+	}
+	if h.publicURL != nil {
+		return h.publicURL.Hostname()
+	}
+	return "localhost"
 }
 
 // resolveCluster loads the cluster in the URL and enforces read access. Sharing this

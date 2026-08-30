@@ -129,6 +129,36 @@ type K8sConfig struct {
 	// HealthCheckInterval is how often registered clusters are re-probed in the
 	// background. Zero disables monitoring.
 	HealthCheckInterval time.Duration
+	// Forward is how a port-forward is handed to the browser.
+	Forward ForwardConfig
+}
+
+// ForwardConfig decides whether a port-forward gets a port of its own.
+//
+// A real port gives the forwarded application an origin of its own at its own root,
+// which is the only way an arbitrary web app works through a tunnel: under a path prefix
+// its absolute asset paths resolve to Kubby, and a single-page app builds URLs in
+// JavaScript where no rewrite can reach them.
+//
+// The port carries no authentication — it is raw TCP, not a Kubby route — so where it
+// binds is a security decision. The default is loopback: only the machine running Kubby
+// can reach it, which is the right answer when that machine is the reader's own.
+type ForwardConfig struct {
+	// Bind is the address local forwards listen on. Empty disables them and every
+	// forward falls back to the authenticated proxy.
+	Bind string
+	// Host is what the browser is told to connect to. Empty means the host Kubby is
+	// reached on, which is right whenever Kubby and the browser share a machine.
+	Host string
+	// Ports constrains which ports may be opened. Empty means any free one, which only
+	// works when the ports are not behind a container's published set.
+	Ports PortRange
+}
+
+// PortRange is an inclusive range of ports. Zero to zero means any.
+type PortRange struct {
+	From int
+	To   int
 }
 
 // Load reads configuration from the environment and validates it. All problems are
@@ -286,6 +316,18 @@ func Load() (*Config, error) {
 	cfg.K8s.InformerIdleTTL = envDuration("KUBBY_INFORMER_IDLE_TTL", 30*time.Minute, &errs)
 
 	cfg.K8s.SidecarContainers = envList("KUBBY_SIDECAR_CONTAINERS")
+
+	// Loopback by default: a port with no authentication in front of it should not be
+	// on the network unless somebody decided it should be.
+	cfg.K8s.Forward.Bind = envOr("KUBBY_FORWARD_BIND", "127.0.0.1")
+	cfg.K8s.Forward.Host = strings.TrimSpace(os.Getenv("KUBBY_FORWARD_HOST"))
+	if raw := strings.TrimSpace(os.Getenv("KUBBY_FORWARD_PORTS")); raw != "" {
+		from, to, err := parsePortRange(raw)
+		if err != nil {
+			fail("KUBBY_FORWARD_PORTS: %v", err)
+		}
+		cfg.K8s.Forward.Ports = PortRange{From: from, To: to}
+	}
 	if len(cfg.K8s.SidecarContainers) == 0 {
 		cfg.K8s.SidecarContainers = []string{"istio-proxy", "istio-init", "vault-agent"}
 	}
@@ -377,4 +419,25 @@ func envList(key string) []string {
 		}
 	}
 	return out
+}
+
+// parsePortRange reads "30000-30049".
+func parsePortRange(raw string) (int, int, error) {
+	from, to, found := strings.Cut(raw, "-")
+	if !found {
+		return 0, 0, fmt.Errorf("a port range looks like 30000-30049, got %q", raw)
+	}
+
+	low, err := strconv.Atoi(strings.TrimSpace(from))
+	if err != nil {
+		return 0, 0, fmt.Errorf("%q is not a port number", from)
+	}
+	high, err := strconv.Atoi(strings.TrimSpace(to))
+	if err != nil {
+		return 0, 0, fmt.Errorf("%q is not a port number", to)
+	}
+	if low < 1 || high > 65535 || low > high {
+		return 0, 0, fmt.Errorf("must be inside 1-65535 and ascending, got %q", raw)
+	}
+	return low, high, nil
 }

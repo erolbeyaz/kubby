@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -38,11 +39,33 @@ type forwardSession struct {
 	Port      int       `json:"port"`
 	URL       string    `json:"url"`
 	StartedAt time.Time `json:"startedAt"`
+	// Mode is how the browser reaches it: "port" for a real local port, "proxy" for the
+	// authenticated route through Kubby. The two behave differently enough that the
+	// screen has to say which one this is.
+	Mode string `json:"mode"`
+	// LocalPort is the port that was opened, when one was.
+	LocalPort int `json:"localPort,omitempty"`
+	// Note explains a fallback, so a reader who expected a port and got a proxy learns
+	// why here rather than by the page misbehaving.
+	Note string `json:"note,omitempty"`
 
 	owner   uuid.UUID
 	proxy   *httputil.ReverseProxy
+	local   *cluster.LocalForward
 	touched time.Time
 	stop    context.CancelFunc
+}
+
+const (
+	forwardModePort  = "port"
+	forwardModeProxy = "proxy"
+)
+
+// close ends everything the session holds. A local forward keeps a listening socket
+// that the proxy's context knows nothing about, so stopping one is not stopping both.
+func (session *forwardSession) close() {
+	session.stop()
+	session.local.Close()
 }
 
 type forwardRegistry struct {
@@ -90,6 +113,17 @@ func (reg *forwardRegistry) list(clusterID string, owner uuid.UUID) []forwardSes
 	return out
 }
 
+// touch marks a session as in use. A local forward carries traffic Kubby never sees as
+// an HTTP request, so without this the idle sweep would close a tunnel someone is using.
+func (reg *forwardRegistry) touch(id string) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	if session, ok := reg.sessions[id]; ok {
+		session.touched = time.Now().UTC()
+	}
+}
+
 func (reg *forwardRegistry) remove(id string, owner uuid.UUID) bool {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -99,7 +133,7 @@ func (reg *forwardRegistry) remove(id string, owner uuid.UUID) bool {
 		return false
 	}
 	delete(reg.sessions, id)
-	session.stop()
+	session.close()
 	return true
 }
 
@@ -108,7 +142,7 @@ func (reg *forwardRegistry) expireLocked() {
 	for id, session := range reg.sessions {
 		if session.touched.Before(cutoff) {
 			delete(reg.sessions, id)
-			session.stop()
+			session.close()
 		}
 	}
 }
@@ -159,6 +193,11 @@ type startForwardBody struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Port      int    `json:"port"`
+	// LocalPort is which port to open on Kubby's host. Zero means any free one, which is
+	// what "Random" in the dialog sends.
+	LocalPort int `json:"localPort,omitempty"`
+	// Proxy asks for the authenticated route instead of a port of its own.
+	Proxy bool `json:"proxy,omitempty"`
 }
 
 func (h *resourceHandlers) startForward(w http.ResponseWriter, r *http.Request) {
@@ -235,10 +274,34 @@ func (h *resourceHandlers) newForwardSession(r *http.Request, c *store.Cluster, 
 		Pod:       target.Pod,
 		Port:      target.Port,
 		URL:       prefix + "/",
+		Mode:      forwardModeProxy,
 		StartedAt: time.Now().UTC(),
 		owner:     user.ID,
 		touched:   time.Now().UTC(),
 		stop:      stop,
+	}
+
+	// A port of its own where that is possible, because it is the only shape in which an
+	// arbitrary web application works: its own origin, at its own root, with its own
+	// cookies. The proxy below stays as the answer for a Kubby the browser can only
+	// reach over HTTP — in a cluster, say, where a port on the pod is not a port anyone
+	// outside it can dial.
+	if !body.Proxy {
+		local, err := h.svc.ListenForward(r.Context(), c, target, impersonate,
+			h.forwardCfg.Bind, body.LocalPort, cluster.PortRange(h.forwardCfg.Ports),
+			func() { h.forwards.touch(id) },
+			func(err error) {
+				h.logger.Warn("port-forward tunnel failed",
+					slog.String("cluster", c.Name), slog.String("error", err.Error()))
+			})
+		if err == nil {
+			session.local = local
+			session.LocalPort = local.Port
+			session.Mode = forwardModePort
+			session.URL = fmt.Sprintf("http://%s:%d/", h.forwardHost(r), local.Port)
+		} else {
+			session.Note = "No local port could be opened, so this is proxied through Kubby: " + err.Error()
+		}
 	}
 
 	session.proxy = &httputil.ReverseProxy{

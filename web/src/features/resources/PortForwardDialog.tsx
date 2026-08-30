@@ -15,13 +15,16 @@ interface PortForwardDialogProps {
 }
 
 /**
- * Reaching a port inside the cluster from the browser.
+ * Reaching a port inside the cluster.
  *
- * This is not kubectl's port-forward and does not pretend to be: nothing binds a port on
- * the reader's machine, because a browser cannot. Kubby holds the tunnel and serves the
- * pod's own pages under a path of its own, so an HTTP port opens in a tab. For a port
- * that speaks something else — a database, gRPC — the equivalent kubectl command is
- * offered to copy instead (ADR-012).
+ * Kubby opens a real port on its own host and pipes it to the pod, which is what makes an
+ * arbitrary web application work: it gets an origin of its own at its own root, so its
+ * absolute asset paths and its cookies both land where it expects them. Serving it under
+ * a path of Kubby's instead breaks every app that builds a URL in JavaScript.
+ *
+ * That port is on the machine running Kubby. When that is the reader's own machine — the
+ * ordinary case — it is theirs to open. When it is not, the tunnel falls back to the
+ * proxy and the dialog says so rather than handing out an address nobody can reach.
  */
 export function PortForwardDialog({
   clusterId,
@@ -42,6 +45,8 @@ export function PortForwardDialog({
   const declared = ports.data?.ports ?? []
   const [chosen, setChosen] = useState<number | null>(null)
   const [typed, setTyped] = useState('')
+  const [localPort, setLocalPort] = useState('')
+  const [openInBrowser, setOpenInBrowser] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -55,8 +60,20 @@ export function PortForwardDialog({
     setBusy(true)
     setError('')
     try {
-      const forward = await api.startForward(clusterId, { type: typeKey, namespace, name: row.name, port })
+      const forward = await api.startForward(clusterId, {
+        type: typeKey,
+        namespace,
+        name: row.name,
+        port,
+        ...(localPort.trim() ? { localPort: Number(localPort) } : {}),
+      })
       void queryClient.invalidateQueries({ queryKey: ['forwards', clusterId] })
+
+      // Opened here rather than after the dialog closes: a browser only treats a new
+      // window as wanted while it can still see the click that asked for it.
+      if (openInBrowser) {
+        window.open(forward.url, '_blank', 'noopener')
+      }
       onOpened(forward)
       onClose()
     } catch (caught) {
@@ -69,7 +86,7 @@ export function PortForwardDialog({
   return (
     <ConfirmDialog
       title={`Forward a port from ${kind} ${namespace ? `${namespace}/` : ''}${row.name}`}
-      confirmLabel="Open"
+      confirmLabel="Start"
       busy={busy}
       disabled={!valid}
       {...(error ? { error } : {})}
@@ -131,9 +148,42 @@ export function PortForwardDialog({
         />
       </label>
 
+      <label
+        className="mt-3 flex items-center justify-center gap-2"
+        style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}
+      >
+        local port
+        <input
+          value={localPort}
+          onChange={(event) => setLocalPort(event.target.value.replace(/[^0-9]/g, ''))}
+          inputMode="numeric"
+          placeholder="Random"
+          aria-label="Local port to forward from"
+          className="w-24 border px-2 py-1 text-center font-mono"
+          style={{
+            borderRadius: 'var(--radius-sharp)',
+            borderColor: 'var(--border-default)',
+            backgroundColor: 'var(--bg-raised)',
+            color: 'var(--text-primary)',
+            fontSize: 'var(--text-secondary-size)',
+          }}
+        />
+      </label>
+
+      <label
+        className="mt-2 flex items-center justify-center gap-2"
+        style={{ fontSize: 'var(--text-micro)', color: 'var(--text-secondary)' }}
+      >
+        <input
+          type="checkbox"
+          checked={openInBrowser}
+          onChange={(event) => setOpenInBrowser(event.target.checked)}
+        />
+        Open in a new browser tab
+      </label>
+
       <p className="mt-3" style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
-        Kubby holds the tunnel and serves the port under a path of its own, so an HTTP
-        service opens in a tab. For anything else, run it locally:
+        For a port that does not speak HTTP — a database, gRPC — run it locally instead:
       </p>
 
       <div className="mt-1.5 flex items-center justify-center gap-2">

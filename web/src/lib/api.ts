@@ -1011,6 +1011,13 @@ const forwardSchema = z.object({
   port: z.number(),
   url: z.string(),
   startedAt: z.string(),
+  // How the browser reaches it. A real local port gives the forwarded app its own
+  // origin at its own root; the proxy is the fallback for a Kubby the browser can only
+  // reach over HTTP, and it cannot serve every application.
+  mode: z.enum(['port', 'proxy']).catch('proxy'),
+  localPort: z.number().optional(),
+  // Why a port could not be opened, when one could not.
+  note: z.string().optional(),
 })
 const forwardsSchema = z.object({ forwards: z.array(forwardSchema) })
 
@@ -1331,7 +1338,15 @@ export const api = {
 
   startForward: (
     clusterId: string,
-    body: { type: string; namespace: string; name: string; port: number },
+    body: {
+      type: string
+      namespace: string
+      name: string
+      port: number
+      // Zero or absent means any free port, which is what "Random" sends.
+      localPort?: number
+      proxy?: boolean
+    },
   ) => request(`/api/v1/clusters/${clusterId}/forwards`, forwardSchema, { method: 'POST', body }),
 
   stopForward: (forwardId: string) =>

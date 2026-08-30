@@ -39,6 +39,13 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- range .Values.service.forwardPorts }}
+            # A port Kubby may open for a port-forward. Declared so the Service can route
+            # to it: a port opened but never published is one the browser cannot dial.
+            - name: fwd-{{ . }}
+              containerPort: {{ . }}
+              protocol: TCP
+            {{- end }}
 
           env:
             - name: KUBBY_HTTP_ADDR
@@ -98,6 +105,18 @@ spec:
             {{- if .Values.inCluster.enabled }}
             - name: KUBBY_ALLOW_IN_CLUSTER
               value: "true"
+            {{- end }}
+            # Empty bind disables local ports, and every forward is proxied through
+            # Kubby's authenticated route instead.
+            - name: KUBBY_FORWARD_BIND
+              value: {{ .Values.config.forward.bind | quote }}
+            {{- with .Values.config.forward.ports }}
+            - name: KUBBY_FORWARD_PORTS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.forward.host }}
+            - name: KUBBY_FORWARD_HOST
+              value: {{ . | quote }}
             {{- end }}
 
           # Liveness asks only whether the process is alive; it deliberately does not

@@ -38,6 +38,32 @@ config:
   # session can read it — never unauthenticated either way.
   metricsToken: ""
 
+  # ------------------------------------------------------------------ port-forward
+  #
+  # A port-forward gets a real port on the machine running Kubby, because that is the
+  # only shape in which an arbitrary web application works through a tunnel: it needs an
+  # origin of its own at its own root for its assets and its cookies to land where it
+  # expects them.
+  #
+  # Inside a cluster that machine is a pod, and a port on a pod is not one a browser can
+  # dial. So this is OFF by default here and every forward is proxied through Kubby's own
+  # authenticated route instead — which works for simple pages and not for single-page
+  # applications.
+  #
+  # To turn it on you have to publish the ports as well as open them:
+  #
+  #   forward:
+  #     bind: "0.0.0.0"
+  #     ports: "30000-30009"     # must match service.forwardPorts below
+  #     host: "kubby.example.com"
+  #
+  # Those ports carry NO authentication. Anything that can reach them reaches the
+  # forwarded service directly, so open them only on a network where that is acceptable.
+  forward:
+    bind: ""
+    ports: ""
+    host: ""
+
 # ---------------------------------------------------------------------------- secrets
 #
 # The key that seals every stored kubeconfig. Lose it and none of them can be opened.
@@ -105,6 +131,13 @@ service:
   type: ClusterIP
   port: 8080
   annotations: {}
+  # The port-forward range, published so the ports Kubby opens are reachable. Must match
+  # config.forward.ports; leaving it empty while that is set opens ports nothing routes to.
+  forwardPorts: []
+  # e.g.
+  #   forwardPorts:
+  #     - 30000
+  #     - 30001
 
 ingress:
   enabled: false

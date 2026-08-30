@@ -13,4 +13,10 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    {{- range .Values.service.forwardPorts }}
+    - port: {{ . }}
+      targetPort: fwd-{{ . }}
+      protocol: TCP
+      name: fwd-{{ . }}
+    {{- end }}
   selector: {{- include "kubby.selectorLabels" . | nindent 4 }}

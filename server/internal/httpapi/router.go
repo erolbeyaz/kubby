@@ -205,6 +205,9 @@ func New(d Deps) *Server {
 		settings:       settingsService,
 		forwards:       newForwardRegistry(),
 		logs:           d.Logs,
+		forwardCfg:     d.Config.K8s.Forward,
+		publicURL:      d.Config.HTTP.PublicURL,
+		logger:         d.Logger,
 	}
 	settingsAPI := &settingsHandlers{svc: settingsService, audit: d.Audit, shipper: shipper}
 	userAPI := &userHandlers{
