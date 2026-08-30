@@ -11,6 +11,7 @@ import { toYaml } from '@/lib/yaml'
 import { availableActionsFor } from './actions'
 import { containersOf, formatQuantities, podSpecOf, pulledFrom, registryOf, volumesOf } from './containers'
 import { ForwardablePort } from './ForwardablePort'
+import { NodeDetail } from './NodeDetail'
 import { Relations } from './Relations'
 import { RestartBadge } from './RestartBadge'
 import { SecretKeys } from './SecretKeys'
@@ -127,7 +128,19 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
 
         {/* The summary draws from the row the list already holds, so it is on screen the
             moment the panel opens; the fetched object fills in the rest behind it. */}
-        {!error && pane === 'summary' && (
+        {/* A node is read differently from anything else here — how hard is it working,
+            what is it made of, how much can it hand out — so it has a panel of its own
+            rather than the generic properties list bent towards it. */}
+        {!error && pane === 'summary' && kind === 'Node' && (
+          <NodeDetail
+            clusterId={clusterId}
+            row={row}
+            object={data ?? {}}
+            onNavigate={onNavigate}
+          />
+        )}
+
+        {!error && pane === 'summary' && kind !== 'Node' && (
           <>
             <Summary
               clusterId={clusterId}
