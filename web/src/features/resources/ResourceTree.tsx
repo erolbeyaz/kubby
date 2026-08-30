@@ -73,17 +73,6 @@ export function ResourceTree({
                 />
               )}
 
-              {/* Not a Kubernetes object — a tunnel exists only while Kubby holds it —
-                  but it is a network thing and this is where someone looks for it. */}
-              {category === 'network' && (
-                <SubEntry
-                  label="Port Forwarding"
-                  typeKey="port-forwards"
-                  selectedType={selectedType}
-                  onSelectType={onSelectType}
-                />
-              )}
-
               {items.map((type) => {
                 const active = type.key === selectedType
                 return (
@@ -112,6 +101,17 @@ export function ResourceTree({
                   </button>
                 )
               })}
+
+              {/* After the kinds, not before them: a tunnel is not a Kubernetes object,
+                  and putting it first pushed down the ones people came for. */}
+              {category === 'network' && (
+                <SubEntry
+                  label="Port Forwarding"
+                  typeKey="port-forwards"
+                  selectedType={selectedType}
+                  onSelectType={onSelectType}
+                />
+              )}
             </Collapsible>
           )
         })}

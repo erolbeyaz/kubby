@@ -93,45 +93,42 @@ export function ForwardablePort({
 
   return (
     <>
-      <span className="inline-flex items-center gap-1.5">
+      {/* The address on the left and the action on the right, one port to a line. Read
+          down the column, act at the edge — a row of chips side by side made the two
+          jobs compete for the same glance. */}
+      <span className="flex w-full items-center gap-3">
         <button
           type="button"
           onClick={() => void openNow()}
           disabled={busy}
           aria-label={open ? `Open ${port} in a new tab` : `Forward ${port} and open it`}
           title={open ? open.url : `Forward ${port} and open it`}
-          className="font-mono transition-colors hover:underline"
+          className="min-w-0 flex-1 truncate text-left font-mono transition-colors hover:underline"
           style={{ fontSize: 'var(--text-micro)', color: 'var(--status-info)' }}
         >
           {busy ? 'Opening…' : text}
         </button>
-
-        {open ? (
-          <button
-            type="button"
-            onClick={() => void stop(open)}
-            disabled={busy}
-            className="tool-chip"
-            style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfiguring(true)}
-            className="tool-chip"
-            style={{ borderColor: 'var(--border-default)', color: 'var(--text-secondary)' }}
-          >
-            Forward…
-          </button>
-        )}
 
         {error && (
           <span style={{ color: 'var(--status-error)' }} title={error}>
             failed
           </span>
         )}
+
+        <button
+          type="button"
+          onClick={() => (open ? void stop(open) : setConfiguring(true))}
+          disabled={busy}
+          className="shrink-0 px-2.5 py-1 font-semibold uppercase tracking-[0.06em] transition-colors"
+          style={{
+            borderRadius: 'var(--radius-sharp)',
+            fontSize: 'var(--text-micro)',
+            backgroundColor: open ? 'var(--bg-active)' : 'var(--accent)',
+            color: open ? 'var(--text-primary)' : 'var(--text-inverse)',
+          }}
+        >
+          {open ? 'Stop' : 'Forward…'}
+        </button>
       </span>
 
       {configuring && (

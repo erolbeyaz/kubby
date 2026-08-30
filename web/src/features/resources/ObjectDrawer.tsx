@@ -434,7 +434,7 @@ function Containers({
 
               {container.ports.length > 0 && (
                 <ContainerField label="Ports">
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-col gap-1">
                     {container.ports.map((port) => (
                       <ForwardablePort
                         key={`${port.port}/${port.protocol}`}

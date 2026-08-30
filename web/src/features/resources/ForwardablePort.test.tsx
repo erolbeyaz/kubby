@@ -44,6 +44,13 @@ describe('ForwardablePort', () => {
     expect(screen.getByRole('button', { name: /Forward 80/ })).toHaveTextContent('80/TCP http')
   })
 
+  // The action sits at the right edge, apart from the address: reading down a column of
+  // ports and acting on one are different jobs and were competing for the same glance.
+  it('offers the action as a button of its own', () => {
+    show()
+    expect(screen.getByRole('button', { name: 'Forward…' })).toBeInTheDocument()
+  })
+
   // The number is where the reader already is when they wonder what is listening on it.
   it('forwards and opens the tab from the click itself', async () => {
     const { start, open } = show()

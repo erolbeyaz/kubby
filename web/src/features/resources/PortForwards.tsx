@@ -17,7 +17,7 @@ import { formatAge } from '@/lib/time'
  */
 export function PortForwards({ clusterId }: { clusterId: string }) {
   const queryClient = useQueryClient()
-  const [menu, setMenu] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ id: string; at?: { x: number; y: number } } | null>(null)
 
   const forwards = useQuery({
     queryKey: ['forwards', clusterId],
@@ -91,6 +91,12 @@ export function PortForwards({ clusterId }: { clusterId: string }) {
               {rows.map((forward) => (
                 <tr
                   key={forward.id}
+                  onContextMenu={(event) => {
+                    // Right-clicking a tunnel is the same question as pressing its menu,
+                    // asked with the other hand.
+                    event.preventDefault()
+                    setMenu({ id: forward.id, at: { x: event.clientX, y: event.clientY } })
+                  }}
                   className="border-b transition-colors hover:bg-[var(--bg-hover)]"
                   style={{ borderColor: 'var(--border-subtle)' }}
                 >
@@ -126,7 +132,7 @@ export function PortForwards({ clusterId }: { clusterId: string }) {
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation()
-                          setMenu(menu === forward.id ? null : forward.id)
+                          setMenu(menu?.id === forward.id ? null : { id: forward.id })
                         }}
                         aria-label={`Actions for ${forward.name}`}
                         className="tool-button"
@@ -135,10 +141,11 @@ export function PortForwards({ clusterId }: { clusterId: string }) {
                       </button>
                     </span>
 
-                    {menu === forward.id && (
+                    {menu?.id === forward.id && (
                       <span
-                        className="absolute right-4 z-30 mt-1 flex flex-col border shadow-lg"
+                        className={menu.at ? 'fixed z-30 flex flex-col border shadow-lg' : 'absolute right-4 z-30 mt-1 flex flex-col border shadow-lg'}
                         style={{
+                          ...(menu.at ? { left: menu.at.x, top: menu.at.y } : {}),
                           borderRadius: 'var(--radius-sharp)',
                           borderColor: 'var(--border-default)',
                           backgroundColor: 'var(--bg-raised)',

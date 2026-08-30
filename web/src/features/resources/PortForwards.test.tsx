@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -76,5 +76,15 @@ describe('PortForwards', () => {
 
     expect(await screen.findByText('proxied')).toBeInTheDocument()
     expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  // The same question as the row's menu, asked with the other hand.
+  it('stops a tunnel from a right-click', async () => {
+    const stop = show([forward()])
+
+    fireEvent.contextMenu(await screen.findByText('metrics-server-786d997795-rb785'))
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    await waitFor(() => expect(stop).toHaveBeenCalledWith('f1'))
   })
 })
