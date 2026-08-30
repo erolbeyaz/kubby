@@ -9,6 +9,11 @@ import { CATEGORY_ICON, CATEGORY_LABEL, CATEGORY_ORDER, kindLabel } from './cate
 interface ResourceTreeProps {
   /** Only an admin sees the deployment's own settings. */
   canManageSettings: boolean
+  /**
+   * Which cluster's kinds to list. Empty before any cluster is registered, where the
+   * rail still has to be there: the way to add one is on it, and a first-run screen with
+   * no navigation leaves the reader looking for a control that is not drawn.
+   */
   clusterId: string
   selectedType: string | null
   onSelectType: (typeKey: string) => void
@@ -25,6 +30,7 @@ export function ResourceTree({
     queryKey: ['resource-types', clusterId],
     queryFn: ({ signal }) => api.resourceTypes(clusterId, signal),
     staleTime: 5 * 60_000,
+    enabled: clusterId !== '',
   })
 
   const byCategory = new Map<string, ResourceType[]>()

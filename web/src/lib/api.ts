@@ -915,6 +915,20 @@ const clusterHealthMetricsSchema = z.object({
   warnings: z.array(z.string()).nullable().optional(),
 })
 
+const usageSeriesSchema = z.object({
+  cpuCores: z.array(pointSchema).nullable().optional(),
+  memoryBytes: z.array(pointSchema).nullable().optional(),
+})
+
+/** One pod's own history, read when its panel is opened rather than for the whole fleet. */
+export const podMetricsSchema = z.object({
+  configured: z.boolean(),
+  error: z.string().optional(),
+  usage: usageSeriesSchema
+    .extend({ containers: z.record(z.string(), usageSeriesSchema).nullable().optional() })
+    .optional(),
+})
+
 const clusterMetricsSchema = z.object({
   configured: z.boolean(),
   error: z.string().optional(),
@@ -927,6 +941,7 @@ const clusterMetricsSchema = z.object({
 })
 
 export type ClusterMetrics = z.infer<typeof clusterMetricsSchema>
+export type PodMetrics = z.infer<typeof podMetricsSchema>
 export type ClusterHealthMetrics = z.infer<typeof clusterHealthMetricsSchema>
 export type NodeDetail = NonNullable<ClusterHealthMetrics['nodeDetails']>[number]
 export type ContainerIssue = z.infer<typeof containerIssueSchema>
@@ -1358,6 +1373,14 @@ export const api = {
 
   stopForward: (forwardId: string) =>
     request(`/api/v1/forwards/${forwardId}`, emptySchema, { method: 'DELETE' }),
+
+  podMetrics: (clusterId: string, namespace: string, name: string, window: string, signal?: AbortSignal) =>
+    request(
+      `/api/v1/clusters/${clusterId}/pod/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}` +
+        `/metrics?window=${encodeURIComponent(window)}`,
+      podMetricsSchema,
+      { signal },
+    ),
 
   podRestarts: (clusterId: string, namespace: string, name: string, signal?: AbortSignal) =>
     request(

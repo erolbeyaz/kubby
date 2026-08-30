@@ -187,3 +187,13 @@ func (s *Service) ClusterHealthMetrics(ctx context.Context, cluster *store.Clust
 	}
 	return promql.ReadClusterHealth(ctx, client, window), source, nil
 }
+
+// PodUsageMetrics reads one pod's own history.
+func (s *Service) PodUsageMetrics(ctx context.Context, cluster *store.Cluster, namespace, pod string, window time.Duration) (*promql.PodUsage, MetricsSource, error) {
+	client, source, err := s.MetricsClient(ctx, cluster)
+	if err != nil {
+		return nil, source, err
+	}
+	usage, err := client.PodUsageOver(ctx, namespace, pod, window)
+	return usage, source, err
+}

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/erolbeyaz/kubby/internal/cluster"
 	"github.com/erolbeyaz/kubby/internal/promql"
 )
@@ -74,4 +76,36 @@ func describeSource(body map[string]any, source cluster.MetricsSource) {
 	if source.Where != "" {
 		body["endpoint"] = source.Where
 	}
+}
+
+// podMetrics reads one pod's own usage over time.
+//
+// On demand rather than in the cluster payload: a fleet has thousands of pods and a
+// reader looks at one, so this is two queries when a panel opens instead of thousands of
+// series on every refresh.
+func (h *resourceHandlers) podMetrics(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.resolveCluster(w, r)
+	if !ok {
+		return
+	}
+
+	namespace := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+	window := parseWindow(r.URL.Query().Get("window"))
+
+	usage, source, err := h.svc.PodUsageMetrics(r.Context(), c, namespace, name, window)
+	if errors.Is(err, promql.ErrNotConfigured) {
+		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
+		return
+	}
+	if err != nil {
+		body := map[string]any{"configured": true, "error": err.Error()}
+		describeSource(body, source)
+		writeJSON(w, http.StatusOK, body)
+		return
+	}
+
+	body := map[string]any{"configured": true, "usage": usage}
+	describeSource(body, source)
+	writeJSON(w, http.StatusOK, body)
 }

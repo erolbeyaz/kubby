@@ -6,7 +6,10 @@ import { AccountMenu, type AccountAction } from '@/components/AccountMenu'
 import { EmptyState } from '@/components/EmptyState'
 import { Icon } from '@/components/Icon'
 import { Logo } from '@/components/Logo'
+import { ResizablePanel } from '@/components/ResizablePanel'
 import { StatusBar } from '@/components/StatusBar'
+
+import { NavigationRail } from '@/features/resources/NavigationRail'
 import { CommandPalette } from '@/features/search/CommandPalette'
 import { AccountScreen } from '@/features/account/AccountScreen'
 import { ManageClustersScreen } from '@/features/clusters/ManageClustersScreen'
@@ -187,15 +190,37 @@ export function Shell({ me, onSignOut }: ShellProps) {
         ) : clusters.isLoading ? (
           <EmptyState title="Loading clusters…" description="" />
         ) : list.length === 0 ? (
-          <EmptyState
-            title="No clusters yet"
-            description={
-              canManage
-                ? 'Add a cluster to start browsing it.'
-                : 'No clusters have been shared with you yet.'
-            }
-            {...(canManage ? { hint: 'Use the picker above → Manage clusters' } : {})}
-          />
+          // The rail comes too. Without it a fresh install has no navigation at all, and
+          // the way to add the first cluster is a control nobody drew.
+          <div className="flex h-full min-h-0">
+            <ResizablePanel storageKey="kubby.explorer.width" defaultWidth={208} minWidth={168} maxWidth={380}>
+              <NavigationRail
+                clusters={list}
+                current={null}
+                canManage={canManage}
+                selectedType={null}
+                onSelectCluster={openClusterOverview}
+                onManageClusters={() => navigate({ section: 'manage' })}
+                onSelectType={(typeKey) =>
+                  typeKey === 'kubby-settings'
+                    ? navigate({ section: 'settings', settingsView: 'kubby' })
+                    : navigate({ section: 'manage' })
+                }
+              />
+            </ResizablePanel>
+
+            <div className="min-w-0 flex-1">
+              <EmptyState
+                title="No clusters yet"
+                description={
+                  canManage
+                    ? 'Add a cluster to start browsing it.'
+                    : 'No clusters have been shared with you yet.'
+                }
+                {...(canManage ? { hint: 'Use the picker on the left → Manage clusters' } : {})}
+              />
+            </div>
+          </div>
         ) : (
           // With no cluster chosen, the landing screen answers the question people
           // actually arrive with: which of my clusters is broken (ADR-056). The same

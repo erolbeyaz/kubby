@@ -50,7 +50,11 @@ function mockApi(object: Record<string, unknown>) {
         ? { relations: [] }
         : url.includes('/restarts')
           ? { app: 0, sidecar: 0, init: 0, details: [] }
-          : object
+          : url.includes('/metrics')
+            ? { configured: false }
+            : url.includes('/resources/')
+              ? { columns: [], rows: [], total: 0, fromCache: false }
+              : object
 
       return Promise.resolve(
         new Response(JSON.stringify(body), {
@@ -128,9 +132,8 @@ describe('ObjectDrawer containers', () => {
     mockApi(POD)
     renderDrawer()
 
-    expect(await screen.findByText('Volumes (1)')).toBeInTheDocument()
-    expect(screen.getByText('ConfigMap')).toBeInTheDocument()
-    expect(screen.getByText('api-config')).toBeInTheDocument()
+    expect(await screen.findByText('Pod Volumes (1)')).toBeInTheDocument()
+    expect(screen.getByText(/api-config/)).toBeInTheDocument()
   })
 
   // The phases it promised have shipped; a panel that still promises them is stale.

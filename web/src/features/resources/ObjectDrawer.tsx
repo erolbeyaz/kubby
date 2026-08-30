@@ -12,6 +12,7 @@ import { availableActionsFor } from './actions'
 import { containersOf, formatQuantities, podSpecOf, pulledFrom, registryOf, volumesOf } from './containers'
 import { ForwardablePort } from './ForwardablePort'
 import { NodeDetail } from './NodeDetail'
+import { PodDetail } from './PodDetail'
 import { Relations } from './Relations'
 import { RestartBadge } from './RestartBadge'
 import { SecretKeys } from './SecretKeys'
@@ -121,7 +122,7 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
 
         {/* Beside the tabs because they change what the panel is showing, the same as a
             tab does. Only a node has a chart to switch. */}
-        {kind === 'Node' && pane === 'summary' && (
+        {(kind === 'Node' || kind === 'Pod') && pane === 'summary' && (
           <span className="flex items-center gap-0.5 pl-2">
             <MetricTab
               label="CPU"
@@ -171,7 +172,18 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
           />
         )}
 
-        {!error && pane === 'summary' && kind !== 'Node' && (
+        {!error && pane === 'summary' && kind === 'Pod' && (
+          <PodDetail
+            clusterId={clusterId}
+            typeKey={typeKey}
+            row={row}
+            object={data ?? {}}
+            metric={metric}
+            onNavigate={onNavigate}
+          />
+        )}
+
+        {!error && pane === 'summary' && kind !== 'Node' && kind !== 'Pod' && (
           <>
             <Summary
               clusterId={clusterId}

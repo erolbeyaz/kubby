@@ -310,6 +310,7 @@ func New(d Deps) *Server {
 				cl.Get("/search", resourceAPI.search)
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/containers", resourceAPI.podContainers)
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/restarts", resourceAPI.podRestarts)
+				cl.Get("/clusters/{id}/pod/{namespace}/{name}/metrics", resourceAPI.podMetrics)
 				cl.Get("/clusters/{id}/pod/{namespace}/{name}/logs", resourceAPI.podLogs)
 				cl.Get("/clusters/{id}/describe/*", resourceAPI.describe)
 				cl.Get("/clusters/{id}/relations/*", resourceAPI.relations)

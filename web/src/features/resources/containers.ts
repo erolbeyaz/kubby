@@ -81,6 +81,10 @@ export interface ContainerSpec {
   requests: Record<string, string>
   limits: Record<string, string>
   mounts: ContainerMount[]
+  /** How many environment entries it declares. The values are secrets often enough. */
+  env: number
+  liveness: string
+  readiness: string
 }
 
 /** A volume the pod carries, named by what it actually is rather than by its key. */
@@ -127,6 +131,9 @@ export function containersOf(podSpec: Record<string, unknown> | null): Container
           requests: quantities(resources.requests),
           limits: quantities(resources.limits),
           mounts: mountsOf(container.volumeMounts),
+          env: (Array.isArray(container.env) ? container.env : []).length,
+          liveness: probeOf(container.livenessProbe),
+          readiness: probeOf(container.readinessProbe),
         }
       })
       .filter((container) => container.image !== '')
@@ -226,4 +233,54 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+/**
+ * A probe as one line.
+ *
+ * What it checks and how patient it is, which together are the answer to "why is this
+ * restarting" often enough to be worth the row. Spelled the way kubectl describe spells
+ * it, because that is what the reader has seen before.
+ */
+export function probeOf(value: unknown): string {
+  const probe = asRecord(value)
+  if (!probe) return ''
+
+  const parts: string[] = []
+
+  const http = asRecord(probe.httpGet)
+  const tcp = asRecord(probe.tcpSocket)
+  const exec = asRecord(probe.exec)
+
+  if (http) {
+    const scheme = (str(http.scheme) || 'HTTP').toLowerCase()
+    parts.push(`http-get ${scheme}://${str(http.host)}:${port(http.port)}${str(http.path) || '/'}`)
+  } else if (tcp) {
+    parts.push(`tcp-socket :${port(tcp.port)}`)
+  } else if (exec) {
+    const command = Array.isArray(exec.command) ? (exec.command as string[]).join(' ') : ''
+    parts.push(`exec ${command}`)
+  }
+
+  for (const [label, key] of [
+    ['delay', 'initialDelaySeconds'],
+    ['timeout', 'timeoutSeconds'],
+    ['period', 'periodSeconds'],
+  ] as const) {
+    const seconds = probe[key]
+    if (typeof seconds === 'number') parts.push(`${label}=${seconds}s`)
+  }
+  for (const [label, key] of [
+    ['#success', 'successThreshold'],
+    ['#failure', 'failureThreshold'],
+  ] as const) {
+    const count = probe[key]
+    if (typeof count === 'number') parts.push(`${label}=${count}`)
+  }
+
+  return parts.join(' · ')
+}
+
+function port(value: unknown): string {
+  return typeof value === 'number' ? String(value) : str(value)
 }

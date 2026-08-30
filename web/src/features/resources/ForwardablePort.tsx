@@ -119,14 +119,19 @@ export function ForwardablePort({
           type="button"
           onClick={() => (open ? void stop(open) : setConfiguring(true))}
           disabled={busy}
-          className="shrink-0 px-2.5 py-1 font-semibold uppercase tracking-[0.06em] transition-colors"
+          className="shrink-0 whitespace-nowrap px-2.5 py-1 font-semibold uppercase tracking-[0.06em] transition-colors"
           // The same shape either way, so the pair reads as one control changing state
           // rather than two buttons that happen to share a place.
+          // The font is set rather than inherited: this button sits inside panels whose
+          // values are monospaced, and a condensed mono capital on a saturated fill at
+          // this size is what made the word hard to read.
           style={{
             borderRadius: 'var(--radius-sharp)',
-            fontSize: 'var(--text-micro)',
+            fontFamily: 'var(--font-sans)',
+            fontSize: '11px',
+            letterSpacing: '0.04em',
             backgroundColor: open ? 'var(--status-error)' : 'var(--accent)',
-            color: 'var(--text-inverse)',
+            color: 'var(--bg-base)',
           }}
         >
           {open ? 'Stop' : 'Forward…'}

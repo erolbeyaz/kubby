@@ -18,7 +18,6 @@ import { HealthPanel } from '@/features/health/HealthPanel'
 import { HelmReleases } from '@/features/helm/HelmReleases'
 import { DescribePane } from '@/features/logs/DescribePane'
 import { LogPane } from '@/features/logs/LogPane'
-import { ClusterPicker } from '@/components/ClusterPicker'
 import { ContextMenu, type MenuItem } from '@/components/ContextMenu'
 import { CreatePane } from '@/features/create/CreatePane'
 import { TAB_ICONS, closeTab, openCreateTab, openTab, tabLabel, type DockTab } from '@/features/logs/dock'
@@ -37,7 +36,7 @@ import { DeleteDialog, type DeleteTarget } from './DeleteDialog'
 import { actionsFor } from './actions'
 
 import { ResourceTable, type NavigationTarget } from './ResourceTable'
-import { ResourceTree } from './ResourceTree'
+import { NavigationRail } from './NavigationRail'
 
 interface ResourceExplorerProps {
   cluster: Cluster
@@ -281,36 +280,19 @@ export function ResourceExplorer({
   return (
     <div className="flex h-full">
       <ResizablePanel storageKey="kubby.explorer.width" defaultWidth={208} minWidth={168} maxWidth={380}>
-        <div
-          className="flex h-full flex-col border-r"
-          style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-surface)' }}
-        >
-          {/* Which cluster, at the top of the rail everything under it belongs to.
-              The rule below it says where the cluster ends and its contents begin. */}
-          <div className="shrink-0 border-b p-2" style={{ borderColor: 'var(--border-default)' }}>
-            <ClusterPicker
-              clusters={clusters}
-              current={cluster}
-              canManage={canManage}
-              onSelect={onSelectCluster}
-              onManage={onManageClusters}
-              fullWidth
-            />
-          </div>
-
-          <div className="min-h-0 flex-1">
-            <ResourceTree
-              clusterId={cluster.id}
-              selectedType={location.typeKey}
-              canManageSettings={canManage}
-              onSelectType={(typeKey) =>
-                typeKey === 'kubby-settings'
-                  ? onNavigate({ section: 'settings', settingsView: 'kubby' })
-                  : onNavigate({ typeKey, objectName: null, objectNamespace: '' })
-              }
-            />
-          </div>
-        </div>
+        <NavigationRail
+          clusters={clusters}
+          current={cluster}
+          canManage={canManage}
+          selectedType={location.typeKey}
+          onSelectCluster={onSelectCluster}
+          onManageClusters={onManageClusters}
+          onSelectType={(typeKey) =>
+            typeKey === 'kubby-settings'
+              ? onNavigate({ section: 'settings', settingsView: 'kubby' })
+              : onNavigate({ typeKey, objectName: null, objectNamespace: '' })
+          }
+        />
       </ResizablePanel>
 
       {/* A column rather than a row: the status strip belongs under this side of the
