@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { api, type ClusterMetrics, type ResourceRow } from '@/lib/api'
 import { formatAbsolute, formatAge } from '@/lib/time'
@@ -12,6 +13,8 @@ interface NodeDetailProps {
   clusterId: string
   row: ResourceRow
   object: Record<string, unknown>
+  /** Which measurement the chart draws. Chosen on the tab row beside YAML. */
+  metric: 'cpu' | 'memory'
   onNavigate: (target: NavigationTarget) => void
 }
 
@@ -24,7 +27,7 @@ interface NodeDetailProps {
  * difference between them is what the kubelet reserved, and that difference is the whole
  * reason both are shown.
  */
-export function NodeDetail({ clusterId, row, object, onNavigate }: NodeDetailProps) {
+export function NodeDetail({ clusterId, row, object, metric, onNavigate }: NodeDetailProps) {
   const status = (object.status ?? {}) as Record<string, unknown>
   const metadata = (object.metadata ?? {}) as Record<string, unknown>
   const info = (status.nodeInfo ?? {}) as Record<string, string>
@@ -56,15 +59,15 @@ export function NodeDetail({ clusterId, row, object, onNavigate }: NodeDetailPro
 
   return (
     <div className="flex flex-col">
-      <Metrics nodeName={row.name} metrics={metrics.data} loading={metrics.isPending} />
+      <Metrics nodeName={row.name} metric={metric} metrics={metrics.data} loading={metrics.isPending} />
 
       <Section title="Properties">
         <Property label="Created">
           {row.createdAt ? `${formatAge(row.createdAt)} ago · ${formatAbsolute(row.createdAt)}` : '—'}
         </Property>
         <Property label="Name">{row.name}</Property>
-        <Property label="Labels">{count(metadata.labels, 'Label')}</Property>
-        <Property label="Annotations">{count(metadata.annotations, 'Annotation')}</Property>
+        <Expandable label="Labels" values={metadata.labels} noun="Label" />
+        <Expandable label="Annotations" values={metadata.annotations} noun="Annotation" />
         {Array.isArray(metadata.finalizers) && metadata.finalizers.length > 0 && (
           <Property label="Finalizers">
             <span className="flex flex-wrap gap-1">
@@ -201,14 +204,21 @@ export function NodeDetail({ clusterId, row, object, onNavigate }: NodeDetailPro
  */
 function Metrics({
   nodeName,
+  metric,
   metrics,
   loading,
 }: {
   nodeName: string
+  metric: 'cpu' | 'memory'
   metrics: ClusterMetrics | undefined
   loading: boolean
 }) {
-  const all = metrics?.health?.trends?.cpuByNodeOverTime ?? []
+  const trends = metrics?.health?.trends
+  // Cores and bytes as the kubelet reports them, not a share of the host. The
+  // percentage series beside these is read from node-exporter, which measures the
+  // machine — right on bare metal, wrong wherever a node is a container, where every
+  // node in a cluster reports the same figure because they share one /proc.
+  const all = (metric === 'cpu' ? trends?.nodeCpuCoresOverTime : trends?.nodeMemoryBytesOverTime) ?? []
   // Prometheus names a node by its scrape target, which is the node's name in most
   // deployments and an address with a port in some; matching either way is cheaper than
   // being right only sometimes.
@@ -217,20 +227,35 @@ function Metrics({
   )
 
   return (
-    <Section title="Metrics">
+    <Section title={metric === 'cpu' ? 'CPU' : 'Memory'}>
       {loading ? (
         <Quiet>Reading metrics…</Quiet>
       ) : !mine || (mine.points ?? []).length < 2 ? (
         <Quiet>
-          No history for this node. Metrics come from Prometheus; a cluster without one shows
-          nothing here.
+          No {metric} history for this node. Metrics come from Prometheus; a cluster without
+          one shows nothing here.
         </Quiet>
       ) : (
         <div className="px-3 py-2">
           <AreaChart
-            series={[{ name: 'CPU usage', colour: SERIES_COLOURS[0]!, points: mine.points ?? [] }]}
-            unit="%"
+            series={[
+              {
+                name: metric === 'cpu' ? 'CPU usage' : 'Memory usage',
+                // Two colours rather than one, because the two charts sit in the same
+                // place and only the legend would otherwise say which is on screen.
+                colour: metric === 'cpu' ? SERIES_COLOURS[0]! : SERIES_COLOURS[7]!,
+                points: mine.points ?? [],
+              },
+            ]}
             height={140}
+            // Cores and bytes, not a share of them. "48%" says how full the machine is
+            // and nothing about whether that is a lot; a pod asks for millicores and
+            // mebibytes, and those are the numbers the reader is comparing against.
+            render={metric === 'cpu' ? (value) => value.toFixed(3) : formatBytes}
+            // A chart with the panel's width to itself can carry a readable clock rather
+            // than only its two ends: thirteen stops over an hour lands on five minutes.
+            ticks={13}
+            values
           />
         </div>
       )}
@@ -294,11 +319,11 @@ function Conditions({ status }: { status: Record<string, unknown> }) {
           <span
             key={condition.type}
             title={condition.message}
-            className="px-1.5 py-0.5 font-semibold"
+            className="px-1.5 py-0.5"
             style={{
               borderRadius: 'var(--radius-sharp)',
-              backgroundColor: good ? 'var(--status-ok)' : 'var(--status-warn)',
-              color: 'var(--text-inverse)',
+              border: `1px solid ${good ? 'var(--status-ok)' : 'var(--status-warn)'}`,
+              color: good ? 'var(--status-ok)' : 'var(--status-warn)',
             }}
           >
             {condition.type}
@@ -309,21 +334,104 @@ function Conditions({ status }: { status: Record<string, unknown> }) {
   )
 }
 
-function count(value: unknown, noun: string): string {
-  const total = value && typeof value === 'object' ? Object.keys(value).length : 0
-  return `${total} ${noun}${total === 1 ? '' : 's'}`
+/**
+ * A count that opens into the thing it counted.
+ *
+ * A node carries a dozen annotations and half of them are a serialised object; printing
+ * them costs the whole panel, and hiding them entirely means the one that matters cannot
+ * be found. So the row says how many and opens when asked.
+ */
+function Expandable({ label, values, noun }: { label: string; values: unknown; noun: string }) {
+  const [open, setOpen] = useState(false)
+
+  const entries =
+    values && typeof values === 'object' ? Object.entries(values as Record<string, string>) : []
+  const summary = `${entries.length} ${noun}${entries.length === 1 ? '' : 's'}`
+
+  if (entries.length === 0) {
+    return <Property label={label}>{summary}</Property>
+  }
+
+  const chevron = (
+    <span aria-hidden="true" className="inline-block" style={{ transform: open ? 'rotate(90deg)' : undefined }}>
+      ›
+    </span>
+  )
+
+  // Collapsed, the whole row opens it; there is one thing to press and it is the size of
+  // the row. Open, only the label closes it again, because the chips beside it are the
+  // point and clicking one should not put them away.
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-expanded={false}
+        className="grid w-full grid-cols-[9rem_1fr] items-baseline gap-2 border-t px-3 py-1.5 text-left transition-colors hover:bg-[var(--bg-hover)]"
+        style={{ borderColor: 'var(--border-subtle)', fontSize: 'var(--text-micro)' }}
+      >
+        <span className="flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+          {label}
+          {chevron}
+        </span>
+        <span className="font-mono" style={{ color: 'var(--text-primary)' }}>
+          {summary}
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="grid grid-cols-[9rem_1fr] items-baseline gap-2 border-t px-3 py-1.5"
+      style={{ borderColor: 'var(--border-subtle)', fontSize: 'var(--text-micro)' }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        aria-expanded
+        className="flex items-center gap-1 text-left transition-colors hover:text-[var(--text-secondary)]"
+        style={{ color: 'var(--text-muted)' }}
+      >
+        {label}
+        {chevron}
+      </button>
+
+      <dd className="flex min-w-0 flex-wrap gap-1">
+        {entries.map(([key, value]) => (
+          <span
+            key={key}
+            title={`${key}=${value}`}
+            className="max-w-full truncate px-1.5 py-0.5 font-mono"
+            style={{
+              borderRadius: 'var(--radius-sharp)',
+              backgroundColor: 'var(--bg-raised)',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            <span style={{ color: 'var(--accent)' }}>{key}</span>
+            {value ? `=${value}` : ''}
+          </span>
+        ))}
+      </dd>
+    </div>
+  )
 }
 
 /** Kubernetes writes memory as a quantity; a reader wants it in the units they think in. */
 function humanise(quantity: string | undefined): string {
-  if (!quantity) return '—'
+  const bytes = quantityBytes(quantity)
+  return bytes > 0 ? formatBytes(bytes) : (quantity ?? '—')
+}
+
+function quantityBytes(quantity: string | undefined): number {
+  if (!quantity) return 0
 
   const match = /^(\d+)(Ki|Mi|Gi|Ti)?$/.exec(quantity)
-  if (!match) return quantity
+  if (!match) return 0
 
   const scale: Record<string, number> = { Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4 }
-  const bytes = Number(match[1]) * (match[2] ? (scale[match[2]] ?? 1) : 1)
-  return formatBytes(bytes)
+  return Number(match[1]) * (match[2] ? (scale[match[2]] ?? 1) : 1)
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

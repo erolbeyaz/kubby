@@ -124,6 +124,16 @@ const (
 	queryCPUByNode = `100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))
 		* on (instance) group_left(nodename) (node_uname_info)`
 
+	// Node usage as Kubernetes itself measures it, read from the kubelet's cAdvisor.
+	//
+	// Not node-exporter. That reports the host's own memory and CPU, which is right on a
+	// bare-metal node and wrong wherever a "node" is a container: every k3d node in one
+	// cluster reported the same 5.7GiB, because they share the machine's /proc. These
+	// two agree with `kubectl top node`, with the scheduler, and with what a pod's
+	// requests are compared against.
+	queryNodeCPUCores    = `sum by (instance) (rate(container_cpu_usage_seconds_total{id="/"}[5m]))`
+	queryNodeMemoryBytes = `sum by (instance) (container_memory_working_set_bytes{id="/"})`
+
 	queryMemoryByNode = `100 * (
 		1 - sum by (instance) (node_memory_MemAvailable_bytes)
 		      / sum by (instance) (node_memory_MemTotal_bytes)

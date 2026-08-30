@@ -345,12 +345,29 @@ export function AreaChart({
   unit = '',
   height = 150,
   render,
+  ticks: wanted,
+  values: scale = false,
 }: {
   series: AreaSeries[]
   unit?: string
   height?: number
   /** For a chart whose numbers are not plain counts — bytes, seconds, a rate. */
   render?: ((value: number) => string) | undefined
+  /**
+   * How many time labels to aim for. Left alone the axis carries three — the ends bound
+   * the window and the middle gives it a scale, which is all a small panel has room for.
+   * A chart with a column to itself can carry more, and then the interval is snapped to
+   * a round number of minutes rather than to wherever the samples happen to fall.
+   */
+  ticks?: number | undefined
+  /**
+   * Draw the value scale down the right edge.
+   *
+   * Off by default: on a small panel the legend below already carries min, max and
+   * current, and a scale would cost width the line needs. A chart with room reads better
+   * with one, because then a shape can be measured rather than only compared.
+   */
+  values?: boolean | undefined
 }) {
   const show = (value: number) => (render ? render(value) : `${format(value)}${unit}`)
 
@@ -358,7 +375,13 @@ export function AreaChart({
   if (drawn.length === 0) return <Empty>not enough history yet</Empty>
 
   const everyValue = drawn.flatMap((line) => line.points.map((point) => point.value))
-  const top = Math.max(...everyValue, 1) * 1.1
+  const highest = Math.max(...everyValue, 0)
+  // With a scale drawn, the top is rounded up to a step a reader can count in — 0.025
+  // rather than 0.022 — because the labels between the ends are only useful if the
+  // spacing between them is a number. Without one the old headroom is kept: nothing is
+  // written down the edge, so there is nothing to round for.
+  const nice = scale ? niceScale(highest) : null
+  const top = nice ? nice.top : Math.max(highest, 1) * 1.1
   const width = 100
 
   // Read off the longest line: every series here comes from the same query range, and a
@@ -366,10 +389,13 @@ export function AreaChart({
   const axis = drawn.reduce((longest, line) =>
     line.points.length > longest.points.length ? line : longest,
   ).points
-  const ticks = axisTicks(axis)
+  const ticks = axisTicks(axis, wanted)
+
+  const stops = nice ? [...nice.stops].reverse() : []
 
   return (
     <div>
+      <div className="relative" style={{ paddingRight: scale ? '3.5rem' : undefined }}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
@@ -377,13 +403,15 @@ export function AreaChart({
         style={{ height }}
         role="img"
       >
-        {[0.25, 0.5, 0.75].map((line) => (
+        {/* Lined up with the labels when there are labels: a gridline that does not meet
+            a number is a line the eye has to guess the value of. */}
+        {(nice ? nice.stops.slice(1, -1).map((value) => value / top) : [0.25, 0.5, 0.75]).map((line) => (
           <line
             key={line}
             x1="0"
             x2={width}
-            y1={height * line}
-            y2={height * line}
+            y1={height * (1 - line)}
+            y2={height * (1 - line)}
             stroke="var(--border-subtle)"
             strokeWidth="0.4"
           />
@@ -411,6 +439,19 @@ export function AreaChart({
           )
         })}
       </svg>
+
+      {scale && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 flex w-14 flex-col justify-between pl-1.5 text-right font-mono"
+          style={{ fontSize: '10px', color: 'var(--text-muted)' }}
+        >
+          {stops.map((stop) => (
+            <span key={stop}>{show(stop)}</span>
+          ))}
+        </span>
+      )}
+      </div>
 
       {/* When. A line with no axis says "something changed" without saying when, which is
           the half that separates a rollout from an outage. Three ticks rather than a
@@ -472,19 +513,38 @@ export function AreaChart({
  * Start, middle and end. The window a chart covers is written on it rather than only in
  * the panel's heading, because the heading is gone as soon as the reader scrolls.
  */
-function axisTicks(points: Array<{ at: string }>): string[] {
+function axisTicks(points: Array<{ at: string }>, wanted?: number): string[] {
   if (points.length === 0) return []
 
   const first = points[0]?.at ?? ''
   const last = points[points.length - 1]?.at ?? ''
-  const middle = points[Math.floor((points.length - 1) / 2)]?.at ?? ''
 
   // A window that crosses midnight needs the date, or 22:00 and 02:00 leave the reader
   // working out which of them is yesterday.
   const spansDays =
     new Date(last).getTime() - new Date(first).getTime() > 20 * 60 * 60 * 1000
 
-  return [formatClock(first, spansDays), formatClock(middle, spansDays), formatClock(last, spansDays)]
+  if (!wanted || wanted < 3) {
+    const middle = points[Math.floor((points.length - 1) / 2)]?.at ?? ''
+    return [formatClock(first, spansDays), formatClock(middle, spansDays), formatClock(last, spansDays)]
+  }
+
+  // Snapped to a round interval rather than spread evenly over the samples: labels a
+  // reader can predict — :10, :20, :30 — are read at a glance, and ones landing on
+  // 13:07 and 13:19 have to be worked out.
+  const from = new Date(first).getTime()
+  const to = new Date(last).getTime()
+  const minutes = (to - from) / 60_000
+  const step =
+    [5, 10, 15, 30, 60, 120, 240, 720, 1440].find((candidate) => minutes / candidate <= wanted - 1) ??
+    1440
+
+  const labels: string[] = []
+  const start = Math.ceil(from / (step * 60_000)) * step * 60_000
+  for (let at = start; at <= to; at += step * 60_000) {
+    labels.push(formatClock(new Date(at).toISOString(), spansDays))
+  }
+  return labels.length >= 2 ? labels : [formatClock(first, spansDays), formatClock(last, spansDays)]
 }
 
 export function Empty({ children }: { children: ReactNode }) {
@@ -518,4 +578,29 @@ export function formatBytes(value: number): string {
 function shortNode(name: string): string {
   const parts = name.split('-')
   return parts.length > 2 ? parts.slice(-2).join('-') : name
+}
+
+/**
+ * A top and the round steps up to it.
+ *
+ * A scale is only readable if the distance between two labels is a number someone can
+ * count in. Dividing the highest sample into quarters gives 0.0055, 0.011, 0.0165 — all
+ * correct and none of them any use — so the step is chosen from 1, 2, 2.5 and 5 at some
+ * power of ten, and the top is the first multiple of it above the data.
+ */
+function niceScale(highest: number): { top: number; stops: number[] } {
+  if (!(highest > 0)) return { top: 1, stops: [0, 0.25, 0.5, 0.75, 1] }
+
+  const wanted = 5
+  const rough = highest / wanted
+  const power = 10 ** Math.floor(Math.log10(rough))
+  const step = ([1, 2, 2.5, 5, 10].find((factor) => factor * power >= rough) ?? 10) * power
+
+  const top = Math.ceil(highest / step) * step
+  const stops: number[] = []
+  // Counted in integers: adding a float to itself twelve times lands on 0.30000000000004.
+  for (let i = 0; i * step <= top + step / 1000; i++) {
+    stops.push(Number((i * step).toPrecision(12)))
+  }
+  return { top, stops }
 }

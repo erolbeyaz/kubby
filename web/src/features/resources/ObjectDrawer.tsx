@@ -32,6 +32,9 @@ interface ObjectDrawerProps {
 
 type Pane = 'summary' | 'yaml'
 
+/** Which measurement a node's chart is drawing. */
+type Metric = 'cpu' | 'memory'
+
 /**
  * A detail panel beside the list rather than instead of it.
  *
@@ -41,6 +44,7 @@ type Pane = 'summary' | 'yaml'
  */
 export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigate, onAction }: ObjectDrawerProps) {
   const [pane, setPane] = useState<Pane>('summary')
+  const [metric, setMetric] = useState<Metric>('cpu')
 
   // Opening an object is a good predictor of reading its YAML, so the editor is fetched
   // now rather than when the tab is clicked and the wait would be visible.
@@ -81,9 +85,16 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
         >
           {kind}
         </span>
-        <h2 className="min-w-0 flex-1 truncate" style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-primary)' }}>
+        <h2 className="min-w-0 truncate" style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-primary)' }}>
           {row.name}
         </h2>
+
+        {/* The name is the thing most often carried out of this panel — into a terminal,
+            a ticket, a search — and it is truncated here, so selecting it by hand gets
+            half of it. */}
+        <span className="mr-auto shrink-0">
+          <CopyButton value={row.name} label="Copy" iconOnly />
+        </span>
 
         <ActionIcons kind={kind} onAction={onAction} />
 
@@ -107,6 +118,25 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
       >
         <PaneTab label="Summary" active={pane === 'summary'} onClick={() => setPane('summary')} />
         <PaneTab label="YAML" active={pane === 'yaml'} onClick={() => setPane('yaml')} />
+
+        {/* Beside the tabs because they change what the panel is showing, the same as a
+            tab does. Only a node has a chart to switch. */}
+        {kind === 'Node' && pane === 'summary' && (
+          <span className="flex items-center gap-0.5 pl-2">
+            <MetricTab
+              label="CPU"
+              active={metric === 'cpu'}
+              onClick={() => setMetric('cpu')}
+              path="M5.5 5.5h5v5h-5zM3 6.5h2M3 9.5h2M11 6.5h2M11 9.5h2M6.5 3v2M9.5 3v2M6.5 11v2M9.5 11v2"
+            />
+            <MetricTab
+              label="Memory"
+              active={metric === 'memory'}
+              onClick={() => setMetric('memory')}
+              path="M2.5 5.5h11v5h-11zM5 10.5v2M8 10.5v2M11 10.5v2M5 7v2M8 7v2M11 7v2"
+            />
+          </span>
+        )}
 
         {/* On the tab row rather than floating over the text: it acts on what the YAML
             tab shows, and over the content it covered the first line of every manifest. */}
@@ -136,6 +166,7 @@ export function ObjectDrawer({ clusterId, typeKey, kind, row, onClose, onNavigat
             clusterId={clusterId}
             row={row}
             object={data ?? {}}
+            metric={metric}
             onNavigate={onNavigate}
           />
         )}
@@ -811,6 +842,39 @@ function UsageBar({
 }
 
 // ---------------------------------------------------------------- pieces
+
+/** One of the measurements a node's chart can draw, as an icon beside the tabs. */
+function MetricTab({
+  label,
+  active,
+  onClick,
+  path,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+  path: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      className="flex h-7 w-7 items-center justify-center transition-colors hover:bg-[var(--bg-hover)]"
+      style={{
+        borderRadius: 'var(--radius-sharp)',
+        color: active ? 'var(--accent)' : 'var(--text-muted)',
+        backgroundColor: active ? 'var(--accent-muted)' : undefined,
+      }}
+    >
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d={path} stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
+}
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (

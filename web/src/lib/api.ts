@@ -767,6 +767,9 @@ const trendsSchema = z.object({
   networkTx: z.array(namedSeriesSchema).nullable().optional(),
   cpuByNodeOverTime: z.array(namedSeriesSchema).nullable().optional(),
   memoryByNodeOverTime: z.array(namedSeriesSchema).nullable().optional(),
+  // The same machines in absolute units, measured the way Kubernetes measures them.
+  nodeCpuCoresOverTime: z.array(namedSeriesSchema).nullable().optional(),
+  nodeMemoryBytesOverTime: z.array(namedSeriesSchema).nullable().optional(),
   ioWaitByNode: z.array(namedSeriesSchema).nullable().optional(),
 })
 

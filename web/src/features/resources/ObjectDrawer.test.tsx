@@ -154,4 +154,13 @@ describe('ObjectDrawer containers', () => {
     expect(await screen.findByText('team/api:1.4.0')).toBeInTheDocument()
     expect(screen.getByText('Init Containers (1)')).toBeInTheDocument()
   })
+
+  // The name is what gets carried into a terminal or a ticket, and it is truncated in
+  // the header, so selecting it by hand gets half of it.
+  it('offers the name for copying', async () => {
+    mockApi(POD)
+    renderDrawer()
+
+    expect(await screen.findByRole('button', { name: 'Copy' })).toBeInTheDocument()
+  })
 })

@@ -69,7 +69,7 @@ export const ACTIONS: ResourceAction[] = [
   },
   { id: 'trigger', label: 'Trigger', kinds: ['CronJob'], icon: glyph('M5 3.5l7 4.5-7 4.5z') },
   { id: 'suspend', label: 'Suspend', kinds: ['CronJob'], icon: glyph('M6 4v8M10 4v8') },
-  { id: 'cordon', label: 'Cordon', kinds: ['Node'], icon: glyph('M8 2v12M2 8h12') },
+  { id: 'cordon', label: 'Cordon', kinds: ['Node'], icon: glyph('M6 3.5v9M10 3.5v9') },
 
   { id: 'logs', label: 'Logs', kinds: ['Pod'], dockTab: 'logs', shortcut: 'L', icon: glyph('M3 3.5h10M3 7h10M3 10.5h6') },
   {
@@ -132,8 +132,35 @@ export function actionsFor(kind: string): ResourceAction[] {
   const applicable = ACTIONS.filter(
     (action) => action.kinds.length === 0 || action.kinds.includes(kind),
   )
-  if (!DATA_ONLY.includes(kind)) return applicable
-  return applicable.filter((action) => DATA_ONLY_ACTIONS.includes(action.id))
+  const scoped = DATA_ONLY.includes(kind)
+    ? applicable.filter((action) => DATA_ONLY_ACTIONS.includes(action.id))
+    : applicable
+
+  return orderFor(kind, scoped)
+}
+
+/**
+ * The order a kind's actions are read in.
+ *
+ * The declaration order groups actions by what they do, which is right for the list this
+ * file is; it is not the order they are used in for every kind. A node is opened, looked
+ * at, closed to new work, emptied, and only then edited or removed — so that is the order
+ * its strip is in, with the destructive one last where a mis-click is least likely.
+ */
+const ORDER: Record<string, string[]> = {
+  Node: ['node-shell', 'cordon', 'drain', 'edit', 'delete'],
+}
+
+function orderFor(kind: string, actions: ResourceAction[]): ResourceAction[] {
+  const wanted = ORDER[kind]
+  if (!wanted) return actions
+
+  const rank = (action: ResourceAction) => {
+    const at = wanted.indexOf(action.id)
+    // Anything unnamed keeps its declared place, after the ones that were named.
+    return at === -1 ? wanted.length : at
+  }
+  return [...actions].sort((a, b) => rank(a) - rank(b))
 }
 
 /**

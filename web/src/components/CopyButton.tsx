@@ -3,6 +3,14 @@ import { useEffect, useRef, useState } from 'react'
 interface CopyButtonProps {
   value: string
   label?: string
+  /**
+   * Show the icon alone.
+   *
+   * For a place where the word would be the widest thing on the line and says nothing the
+   * icon does not — beside a title, in a table cell. The label still names the button for
+   * a screen reader and appears on hover.
+   */
+  iconOnly?: boolean
 }
 
 /**
@@ -12,7 +20,7 @@ interface CopyButtonProps {
  * refused often enough — an insecure origin, a denied permission — that the failure
  * needs saying too.
  */
-export function CopyButton({ value, label = 'Copy' }: CopyButtonProps) {
+export function CopyButton({ value, label = 'Copy', iconOnly = false }: CopyButtonProps) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -34,6 +42,9 @@ export function CopyButton({ value, label = 'Copy' }: CopyButtonProps) {
   }
 
   const text = state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label
+  // Larger without the word beside it: on its own the glyph carries the whole meaning
+  // and a small one is a target that has to be aimed at.
+  const glyph = iconOnly ? 15 : 11
   const colour =
     state === 'copied' ? 'var(--accent)' : state === 'failed' ? 'var(--status-error)' : 'var(--text-secondary)'
 
@@ -43,7 +54,9 @@ export function CopyButton({ value, label = 'Copy' }: CopyButtonProps) {
       onClick={() => void copy()}
       aria-label={label}
       title={`${label} to clipboard`}
-      className="flex h-7 items-center gap-1.5 border bg-[var(--bg-surface)] px-2 transition-colors hover:bg-[var(--bg-active)]"
+      className={`flex items-center border bg-[var(--bg-surface)] transition-colors hover:bg-[var(--bg-active)] ${
+        iconOnly ? 'h-7 w-7 justify-center' : 'h-7 gap-1.5 px-2'
+      }`}
       style={{
         borderRadius: 'var(--radius-sharp)',
         borderColor: state === 'idle' ? 'var(--border-default)' : colour,
@@ -52,16 +65,16 @@ export function CopyButton({ value, label = 'Copy' }: CopyButtonProps) {
       }}
     >
       {state === 'copied' ? (
-        <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+        <svg width={glyph} height={glyph} viewBox="0 0 12 12" aria-hidden="true">
           <path d="M2 6.5 L4.5 9 L10 3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       ) : (
-        <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+        <svg width={glyph} height={glyph} viewBox="0 0 12 12" aria-hidden="true">
           <rect x="4" y="4" width="6.5" height="6.5" rx="1" fill="none" stroke="currentColor" strokeWidth="1.3" />
           <path d="M8 1.5 H2.5 A1 1 0 0 0 1.5 2.5 V8" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
         </svg>
       )}
-      <span>{text}</span>
+      {!iconOnly && <span>{text}</span>}
     </button>
   )
 }

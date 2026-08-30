@@ -201,7 +201,12 @@ type Trends struct {
 	NetworkTx     []NamedSeries `json:"networkTx"`
 	CPUByNodeOver []NamedSeries `json:"cpuByNodeOverTime"`
 	MemoryByNode  []NamedSeries `json:"memoryByNodeOverTime"`
-	IOWaitByNode  []NamedSeries `json:"ioWaitByNode"`
+	// NodeCPUCores and NodeMemoryBytes are the same machines in absolute units, measured
+	// the way Kubernetes measures them. A percentage says how full a node is; a pod asks
+	// for millicores and mebibytes, and those are what the reader compares against.
+	NodeCPUCores    []NamedSeries `json:"nodeCpuCoresOverTime"`
+	NodeMemoryBytes []NamedSeries `json:"nodeMemoryBytesOverTime"`
+	IOWaitByNode    []NamedSeries `json:"ioWaitByNode"`
 
 	// Sparks are the little lines under the summary tiles. A count with no shape behind
 	// it cannot tell a spike from a plateau, and those call for different actions.
@@ -754,6 +759,8 @@ func readTrends(ctx context.Context, client *Client, window, step time.Duration)
 
 	named(queryCPUByNode, "nodename", func(s []NamedSeries) { out.CPUByNodeOver = s })
 	named(queryMemoryByNode, "nodename", func(s []NamedSeries) { out.MemoryByNode = s })
+	named(queryNodeCPUCores, "instance", func(s []NamedSeries) { out.NodeCPUCores = s })
+	named(queryNodeMemoryBytes, "instance", func(s []NamedSeries) { out.NodeMemoryBytes = s })
 	named(queryNodeIOWait, "nodename", func(s []NamedSeries) { out.IOWaitByNode = s })
 
 	// One line per summary tile that has a shape worth seeing.

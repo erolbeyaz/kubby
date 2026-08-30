@@ -132,3 +132,68 @@ describe('AreaChart', () => {
     expect(screen.getByText('not enough history yet')).toBeInTheDocument()
   })
 })
+
+/** An hour of samples, one a minute, starting on an awkward second. */
+function anHour(): { at: string; value: number }[] {
+  const start = Date.parse('2026-08-30T13:07:23Z')
+  return Array.from({ length: 61 }, (_, minute) => ({
+    at: new Date(start + minute * 60_000).toISOString(),
+    value: minute,
+  }))
+}
+
+describe('AreaChart time axis', () => {
+  // The default is what a small panel has room for: the ends bound the window and the
+  // middle gives it a scale (ADR-129).
+  it('carries three labels when it is not told otherwise', () => {
+    render(<AreaChart series={[{ name: 'cpu', colour: '#0af', points: anHour() }]} />)
+
+    const axis = screen.getByTitle(/times in/)
+    expect(axis.children).toHaveLength(3)
+  })
+
+  // Labels a reader can predict — :10, :20, :30 — are read at a glance; ones landing on
+  // 13:07 and 13:19 have to be worked out.
+  it('snaps to a round interval when asked for more', () => {
+    render(<AreaChart series={[{ name: 'cpu', colour: '#0af', points: anHour() }]} ticks={7} />)
+
+    const labels = Array.from(screen.getByTitle(/times in/).children).map((node) => node.textContent)
+    expect(labels.length).toBeGreaterThan(3)
+    for (const label of labels) {
+      expect(label).toMatch(/[0-9]{2}:(00|10|20|30|40|50)/)
+    }
+  })
+
+  // Read by finding a value between two labels, which two gaps do not give much room
+  // for — and off by default, because on a small panel the scale costs the line width.
+  it('draws the value scale only when asked', () => {
+    const { container, rerender } = render(
+      <AreaChart series={[{ name: 'cpu', colour: '#0af', points: anHour() }]} unit="%" />,
+    )
+    expect(screen.queryByText('45%')).not.toBeInTheDocument()
+
+    rerender(<AreaChart series={[{ name: 'cpu', colour: '#0af', points: anHour() }]} unit="%" values />)
+
+    // Round steps rather than quarters of the highest sample: 49.5% and 16.5% are
+    // correct and no use, and a scale is read by counting between two labels.
+    expect(scaleOf(container)).toEqual(['60%', '40%', '20%', '0%'])
+  })
+
+  // The reason for rounding: a node idling at 0.02 cores needs a scale that goes to
+  // 0.025 in steps of 0.005, not one that goes to 0.022 in steps of 0.0055.
+  it('picks a step a reader can count in, whatever the size of the numbers', () => {
+    const tiny = Array.from({ length: 5 }, (_, i) => ({ at: `${i}`, value: 0.02 }))
+    const { container } = render(
+      <AreaChart series={[{ name: 'cpu', colour: '#0af', points: tiny }]} values render={(v) => v.toFixed(3)} />,
+    )
+
+    expect(scaleOf(container)).toEqual(['0.020', '0.015', '0.010', '0.005', '0.000'])
+  })
+})
+
+/** The column of values down the right edge, which is deliberately hidden from the
+ *  accessibility tree — the legend below carries the same numbers with names on them. */
+function scaleOf(container: HTMLElement): string[] {
+  const scale = container.querySelector('[aria-hidden="true"].absolute')
+  return Array.from(scale?.children ?? []).map((node) => node.textContent ?? '')
+}

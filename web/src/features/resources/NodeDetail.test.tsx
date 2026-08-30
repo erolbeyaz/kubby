@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api, type ResourceRow } from '@/lib/api'
@@ -41,8 +42,10 @@ const row: ResourceRow = {
   fields: {},
 }
 
-function show(pods: ResourceRow[] = []) {
-  vi.spyOn(api, 'clusterMetrics').mockResolvedValue({ configured: false })
+function show(pods: ResourceRow[] = [], metric: 'cpu' | 'memory' = 'cpu', trends?: unknown) {
+  vi.spyOn(api, 'clusterMetrics').mockResolvedValue(
+    (trends ? { configured: true, health: { trends } } : { configured: false }) as never,
+  )
   vi.spyOn(api, 'resources').mockImplementation((_cluster, typeKey) =>
     Promise.resolve({
       columns: [],
@@ -54,7 +57,7 @@ function show(pods: ResourceRow[] = []) {
 
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <NodeDetail clusterId="c1" row={row} object={node} onNavigate={() => {}} />
+      <NodeDetail clusterId="c1" row={row} object={node} metric={metric} onNavigate={() => {}} />
     </QueryClientProvider>,
   )
 }
@@ -72,6 +75,8 @@ describe('NodeDetail', () => {
     expect(screen.getByText('InternalIP: 172.20.0.2')).toBeInTheDocument()
     expect(screen.getByText('2 Labels')).toBeInTheDocument()
     expect(screen.getByText('1 Annotation')).toBeInTheDocument()
+    // Counted, not printed: a node's annotations are long enough to cost the panel.
+    expect(screen.queryByText(/^a=1$/)).not.toBeInTheDocument()
     expect(screen.getByText('wrangler.cattle.io/node')).toBeInTheDocument()
   })
 
@@ -111,6 +116,43 @@ describe('NodeDetail', () => {
   // empty chart that reads as a quiet machine.
   it('says why the chart is empty rather than drawing nothing', async () => {
     show()
-    expect(await screen.findByText(/No history for this node/)).toBeInTheDocument()
+    expect(await screen.findByText(/No cpu history for this node/)).toBeInTheDocument()
+  })
+
+  // Hiding them entirely means the one that matters cannot be found, so the count opens.
+  it('opens the labels it counted', async () => {
+    show()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Labels/ }))
+
+    expect(screen.getByTitle('a=1')).toBeInTheDocument()
+    expect(screen.getByTitle('b=2')).toBeInTheDocument()
+    expect(screen.queryByText('2 Labels')).not.toBeInTheDocument()
+  })
+
+  // Lens draws cores and bytes because that is what a pod's request is written in. A
+  // percentage says how full the machine is and nothing about whether that is a lot.
+  it('draws the amount used, not the share of the machine', async () => {
+    const points = Array.from({ length: 10 }, (_, i) => ({
+      at: new Date(Date.parse('2026-08-30T13:00:00Z') + i * 60_000).toISOString(),
+      value: 0.05,
+    }))
+
+    show([], 'cpu', { nodeCpuCoresOverTime: [{ name: row.name, points }] })
+
+    // Cores as the kubelet reports them, not a share of the machine.
+    expect(await screen.findAllByText('0.050')).not.toHaveLength(0)
+    expect(screen.queryByText('50%')).not.toBeInTheDocument()
+  })
+
+  it('reads memory in bytes off the node\'s own capacity', async () => {
+    const points = Array.from({ length: 10 }, (_, i) => ({
+      at: new Date(Date.parse('2026-08-30T13:00:00Z') + i * 60_000).toISOString(),
+      value: 232 * 1024 * 1024,
+    }))
+
+    show([], 'memory', { nodeMemoryBytesOverTime: [{ name: row.name, points }] })
+
+    expect(await screen.findAllByText('232 MiB')).not.toHaveLength(0)
   })
 })
