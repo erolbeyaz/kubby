@@ -120,11 +120,13 @@ export function ForwardablePort({
           onClick={() => (open ? void stop(open) : setConfiguring(true))}
           disabled={busy}
           className="shrink-0 px-2.5 py-1 font-semibold uppercase tracking-[0.06em] transition-colors"
+          // The same shape either way, so the pair reads as one control changing state
+          // rather than two buttons that happen to share a place.
           style={{
             borderRadius: 'var(--radius-sharp)',
             fontSize: 'var(--text-micro)',
-            backgroundColor: open ? 'var(--bg-active)' : 'var(--accent)',
-            color: open ? 'var(--text-primary)' : 'var(--text-inverse)',
+            backgroundColor: open ? 'var(--status-error)' : 'var(--accent)',
+            color: 'var(--text-inverse)',
           }}
         >
           {open ? 'Stop' : 'Forward…'}

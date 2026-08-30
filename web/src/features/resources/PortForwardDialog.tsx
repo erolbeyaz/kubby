@@ -44,15 +44,16 @@ export function PortForwardDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  // Only asked for when the caller did not already know: clicking a port answers this
-  // question by existing.
   const declared = useQuery({
     queryKey: ['ports', clusterId, typeKey, namespace, name],
     queryFn: ({ signal }) => api.forwardablePorts(clusterId, typeKey, namespace, name, signal),
+    // Only when the caller did not already know. Clicking a port answers this by
+    // existing; the row's own menu does not.
     enabled: port === undefined,
   })
 
-  const ports = declared.data?.ports ?? []
+  // With a port already chosen there is nothing to list; the line below simply states it.
+  const ports = port === undefined ? (declared.data?.ports ?? []) : []
   const target = chosen ?? ports[0]?.port ?? null
 
   const start = async () => {
@@ -95,38 +96,33 @@ export function PortForwardDialog({
       onCancel={onClose}
     >
       <div className="flex flex-col gap-3 text-left">
-        {port === undefined && (
-          <div className="flex flex-col gap-1.5">
-            <span style={{ fontSize: 'var(--text-secondary-size)', color: 'var(--text-secondary)' }}>
-              Port to forward:
+        <label className="flex items-center gap-3" style={{ fontSize: 'var(--text-secondary-size)' }}>
+          <span style={{ color: 'var(--text-secondary)' }}>Port to forward:</span>
+          {ports.length > 1 ? (
+            <select
+              value={String(target ?? '')}
+              onChange={(event) => setChosen(Number(event.target.value))}
+              aria-label="Port to forward"
+              className="min-w-0 flex-1 border-0 border-b bg-transparent px-1 py-1 font-mono outline-none"
+              style={{
+                borderColor: 'var(--border-default)',
+                color: 'var(--text-primary)',
+                fontSize: 'var(--text-secondary-size)',
+              }}
+            >
+              {ports.map((option) => (
+                <option key={`${option.container ?? ''}:${option.port}`} value={option.port}>
+                  {option.port}
+                  {option.name ? ` · ${option.name}` : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="min-w-0 flex-1 font-mono" style={{ color: 'var(--text-primary)' }}>
+              {target ?? (declared.isPending ? 'reading…' : 'none declared')}
             </span>
-            {ports.length === 0 ? (
-              <span style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
-                {declared.isPending
-                  ? 'Reading the declared ports…'
-                  : 'Nothing is declared here. Forward from a port on the detail panel instead.'}
-              </span>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {ports.map((option) => (
-                  <button
-                    key={`${option.container ?? ''}:${option.port}`}
-                    type="button"
-                    onClick={() => setChosen(option.port)}
-                    className="tool-chip font-mono"
-                    style={{
-                      borderColor: target === option.port ? 'var(--accent)' : 'var(--border-default)',
-                      color: target === option.port ? 'var(--accent)' : 'var(--text-secondary)',
-                    }}
-                  >
-                    {option.port}
-                    {option.name ? ` · ${option.name}` : ''}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+          )}
+        </label>
 
         <label className="flex items-center gap-3" style={{ fontSize: 'var(--text-secondary-size)' }}>
           <span style={{ color: 'var(--text-secondary)' }}>Local port to forward from:</span>
@@ -164,9 +160,8 @@ export function PortForwardDialog({
 
         <p style={{ fontSize: 'var(--text-micro)', color: 'var(--text-muted)' }}>
           Forwarding {namespace ? `${namespace}/` : ''}
-          {name}
-          {target !== null ? `:${target}` : ''}. The port opens on the machine running Kubby
-          and carries no authentication of its own.
+          {name}. The port opens on the machine running Kubby and carries no
+          authentication of its own.
         </p>
       </div>
     </ConfirmDialog>
